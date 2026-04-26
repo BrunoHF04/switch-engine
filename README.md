@@ -1,83 +1,166 @@
 # Switch Engine
 
-Memory Scanner para Nintendo Switch como **Tesla Overlay**, usando `libnx` + `libtesla`.
-Resultados sao gravados de forma paginada em `sdmc:/switch/switch-engine/results.bin`
-para nao estourar o heap reduzido do overlay.
+Memory Scanner para Nintendo Switch dividido em dois componentes:
 
-## Status
+- **switch-engine.ovl** &mdash; Tesla Overlay (UI), em `./Makefile`.
+- **switch-engine-mod.nsp** &mdash; Atmosphere SysModule com capabilities de debug, em `./sysmod/`.
 
-Esqueleto inicial. Ja temos:
+```
++---------------------------+         +---------------------------+
+|  switch-engine.ovl        |  IPC    |  switch-engine-mod.nsp    |
+|  (Tesla Overlay)          | <-----> |  (Atmosphere SysModule)   |
+|  - libtesla UI            |  seng:  |  - svcDebugActiveProcess  |
+|  - SengClient (cmif)      |         |  - svcReadDebugProcMemory |
+|  - ResultsStore (sdmc)    |         |  - svcWriteDebugProcMem   |
++---------------------------+         +---------------------------+
+                                              |
+                                              v
+                                       sdmc:/atmosphere/contents/
+                                         420000000053454E/
+                                           exefs.nsp
+                                           toolbox.json
+                                           flags/boot2.flag
+```
 
-- Estrutura de projeto compilavel pelo `Makefile` do devkitPro.
-- `SwitchEngineOverlay : tsl::Overlay` como root.
-- `MainGui : tsl::Gui` com botoes (Detect Target / First Scan / Next Scan / Reset).
-- `MemoryScanner` envolvendo `svcQueryDebugProcessMemory` e `svcReadDebugProcessMemory`.
-- `ProcessUtils` para obter PID + TitleID do `Application` em primeiro plano.
-- `ResultsStore` para persistencia paginada no SD.
+Por que dois componentes? Tesla overlays sao carregados pelo `nx-ovlloader` e
+**herdam** as capabilities do loader, que **nao** liberam SVCs de debug. A
+unica forma legitima de chamar `svcDebugActiveProcess` e amigos e ter um NPDM
+proprio &mdash; o que so o sysmod tem.
 
-## Layout
+## Estrutura
 
 ```
 switch-engine/
-|- Makefile
+|- Makefile                    # builda o overlay (.ovl)
 |- README.md
-|- source/
-|  |- main.cpp                 # entry point, define TESLA_INIT_IMPL
-|  |- Overlay.hpp / .cpp       # tsl::Overlay raiz
+|- include/
+|  |- seng_ipc.hpp             # contrato IPC (compartilhado overlay+sysmod)
+|- source/                     # codigo do OVERLAY
+|  |- main.cpp
+|  |- Overlay.hpp / .cpp
 |  |- gui/
-|  |  |- MainGui.hpp / .cpp    # tela inicial
+|  |  |- MainGui.hpp / .cpp
 |  |- scanner/
 |     |- MemoryScanner.hpp / .cpp
-|     |- ProcessUtils.hpp / .cpp
+|     |- ProcessUtils.hpp / .cpp     # delega tudo p/ SengClient
 |     |- ResultsStore.hpp / .cpp
-|- lib/
-   |- libtesla/                # adicionar como submodulo
+|     |- SengClient.hpp / .cpp        # cmif client p/ servico "seng"
+|- sysmod/                     # codigo do SYSMODULE
+|  |- Makefile                       # gera exefs.nsp
+|  |- switch-engine-mod.json         # NPDM (capabilities de debug)
+|  |- toolbox.json                   # metadata p/ sysmod-manager
+|  |- source/
+|     |- main.cpp                    # __appInit, heap, server loop
+|     |- Debugger.hpp / .cpp         # wrapper svcDebug*
+|     |- IpcServer.hpp / .cpp        # cmif server (commands 0-7)
 ```
+
+## Title ID e configuracao do Atmosphere
+
+O sysmod usa o TID **`0x420000000053454E`** (faixa de homebrew, terminado em
+`SEN` em ASCII para "Switch ENgine"). Esse mesmo TID aparece em 3 lugares e
+**precisa ser identico nos tres**:
+
+1. `sysmod/switch-engine-mod.json` -> `title_id` / `title_id_range_min/max`.
+2. `sysmod/Makefile` -> `TARGET_TID := 420000000053454E`.
+3. `include/seng_ipc.hpp` -> `kSysmodTitleId`.
+
+O Atmosphere reconhece um sysmod homebrew quando ele aparece em:
+
+```
+sdmc:/atmosphere/contents/<TID>/
+    exefs.nsp                 # binario do sysmod (gerado pelo Makefile)
+    toolbox.json              # opcional, p/ sysmod-manager listar
+    flags/
+        boot2.flag            # ARQUIVO VAZIO; presenca = autostart no boot
+```
+
+Sem `flags/boot2.flag` o sysmod nao roda. Com ele, o Atmosphere o inicia logo
+apos o `boot2` do firmware (antes mesmo do menu HOME aparecer), e nesse ponto
+ele ja registra o servico `seng` em `sm:`.
+
+Voce pode trocar o TID se ja tiver outro sysmod usando esse. Use a faixa
+`0x420000xxxxxxxxxx` ou `0x430000xxxxxxxxxx` para nao colidir com sysmods
+oficiais nem outros homebrew populares (sys-clk, sys-ftpd, sys-botbase).
 
 ## Build
 
 Pre-requisitos:
 
-- devkitPro com `switch-dev` instalado.
+- devkitPro com `switch-dev` instalado (`pacman -S switch-dev`).
+- `npdmtool`, `elf2nso`, `build_pfs0` (ja vem com o `switch-tools` do devkitPro).
 - libtesla em `lib/libtesla` (submodulo Git).
 
 ```bash
 git submodule add https://github.com/WerWolv/libtesla lib/libtesla
+
+# 1) Sysmod (gera sysmod/exefs.nsp)
+make -C sysmod
+
+# 2) Overlay (gera switch-engine.ovl)
 make
 ```
 
-A saida e `switch-engine.ovl`. Copie para `sdmc:/switch/.overlays/`.
+## Instalacao no console
 
-## Importante: capabilities de kernel
+```bash
+# Caminho do SD card (ajuste para sua maquina)
+SD=/run/media/$USER/SDCARD
 
-`svcReadDebugProcessMemory`, `svcDebugActiveProcess`, `svcQueryDebugProcessMemory`
-**so funcionam se o NPDM do processo chamador autorizar esses SVCs**.
+# 1) Sysmod
+mkdir -p $SD/atmosphere/contents/420000000053454E/flags
+cp sysmod/exefs.nsp     $SD/atmosphere/contents/420000000053454E/exefs.nsp
+cp sysmod/toolbox.json  $SD/atmosphere/contents/420000000053454E/toolbox.json
+touch                   $SD/atmosphere/contents/420000000053454E/flags/boot2.flag
 
-Tesla overlays sao carregados pelo `ovlloader`/`Tesla-Menu` e **herdam** as
-capabilities do loader. O loader padrao **nao** concede SVCs de debug.
+# 2) Overlay
+mkdir -p $SD/switch/.overlays
+cp switch-engine.ovl    $SD/switch/.overlays/
 
-Voce tem 3 caminhos:
+# 3) Reboot necessario para o boot2 carregar o sysmod pela primeira vez.
+```
 
-1. **Patch o `ovlloader`** para incluir os SVCs 0x60, 0x65, 0x69, 0x6A, 0x6E, 0x6F
-   no NPDM. Funciona, mas afeta TODOS os overlays.
+Ou simplesmente: `make -C sysmod install SDMOUNT=$SD`.
 
-2. **Hibrido (recomendado)** -> mantenha o overlay so como UI e crie um SysModule
-   companion (`switch-engine-mod`) com NPDM proprio que tenha os SVCs. O overlay
-   conversa com ele via servico IPC custom (ex: `seng:`). E como o EdiZon-SE
-   funciona com o `dmnt:cht`.
+## Verificacao
 
-3. **Reusar `dmnt:cht`** do Atmosphere -> nao chama SVCs de debug direto, usa
-   o servico de cheat manager. Mais limitado mas funciona em overlay puro.
+Apos reboot:
 
-A camada `ProcessUtils` + `MemoryScanner` foi desenhada para ser portada para
-caminho (2) sem alterar a UI: basta substituir as chamadas SVC por chamadas
-IPC para o sysmod companion.
+1. Abra um jogo qualquer.
+2. Pressione `L + dpad-down + RS` (atalho default do Tesla-Menu).
+3. Selecione "Switch Engine".
+4. "Detect foreground" -> mostra `TID xxxxxxxxxxxxxxxx` -> sysmod respondeu OK.
+5. "First Scan" -> deve gerar `sdmc:/switch/switch-engine/results.bin`.
+
+Se "Detect foreground" mostrar `error`, o sysmod nao esta rodando. Cheque:
+
+```bash
+# No PC, depois do reboot, com SD montado:
+ls $SD/atmosphere/logs/                       # logs de crash do sysmod
+cat $SD/atmosphere/contents/420000000053454E/flags/boot2.flag    # deve existir
+```
+
+## Contrato IPC (servico `seng`)
+
+| Cmd | Nome              | In                | Out / Buffer        |
+|---:-|-------------------|-------------------|---------------------|
+| 0   | GetVersion        | -                 | u32 version         |
+| 1   | GetForegroundPid  | -                 | u64 pid             |
+| 2   | GetTitleId        | u64 pid           | u64 tid             |
+| 3   | AttachProcess     | u64 pid           | -                   |
+| 4   | DetachProcess     | -                 | -                   |
+| 5   | QueryMemory       | u64 addr          | MemoryRegion (32 B) |
+| 6   | ReadMemory        | u64 addr, u64 sz  | Type-B out buffer   |
+| 7   | WriteMemory       | u64 addr, u64 sz  | Type-A in  buffer   |
+| 8   | IsAttached        | -                 | u8                  |
+
+Buffers limitados a `seng::kMaxChunkBytes = 64 KB` por chamada.
 
 ## Proximos passos
 
-- [ ] Adicionar selecao de tipo de valor (u8/u16/u32/u64/f32/f64) na UI.
-- [ ] Adicionar comparadores (>=, <=, between, changed, unchanged).
-- [ ] Lista de resultados scrollavel (paginada via `ResultsStore::readPage`).
-- [ ] Editor de valor inline (svcWriteDebugProcessMemory).
-- [ ] Mover scan para thread separada com progresso na UI.
-- [ ] Sysmod companion para uso real (ver secao acima).
+- [ ] UI: input numerico para o valor de busca, picker de tipo (u8/u16/u32/u64/f32/f64).
+- [ ] UI: lista scrollavel de resultados via `ResultsStore::readPage()`.
+- [ ] UI: editor de valor inline (chama `SengClient::writeMemory`).
+- [ ] Scanner: comparadores `>=`, `<=`, `between`, `changed`, `unchanged`.
+- [ ] Scanner: thread separada para nao travar redraw do Tesla.
+- [ ] Sysmod: log circular em `sdmc:/switch/switch-engine/sysmod.log` p/ debugar.

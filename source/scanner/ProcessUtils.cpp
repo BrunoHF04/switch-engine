@@ -1,4 +1,5 @@
 #include "ProcessUtils.hpp"
+#include "SengClient.hpp"
 
 namespace ProcessUtils {
 
@@ -7,38 +8,30 @@ namespace ProcessUtils {
             return MAKERESULT(Module_Libnx, LibnxError_BadInput);
         }
 
-        // 1. Pega o PID do Application em foreground.
-        uint64_t pid = 0;
-        Result rc = pmdmntGetApplicationProcessId(&pid);
-        if (R_FAILED(rc)) {
-            return rc;
-        }
+        // Garante conexao com o sysmod (lazy init). Se o sysmod nao estiver
+        // instalado, smGetService retorna 0xE15 (notFound).
+        Result rc = SengClient::initialize();
+        if (R_FAILED(rc)) return rc;
 
-        // 2. Resolve o TitleID a partir do PID.
-        uint64_t tid = 0;
-        rc = pminfoGetProgramId(&tid, pid);
-        if (R_FAILED(rc)) {
-            return rc;
-        }
+        rc = SengClient::getForegroundPid(out_pid);
+        if (R_FAILED(rc)) return rc;
 
-        *out_pid      = pid;
-        *out_title_id = tid;
-        return 0;
+        return SengClient::getTitleId(*out_pid, out_title_id);
     }
 
-    Result attachDebug(uint64_t pid, Handle *out_debug_handle) {
-        if (!out_debug_handle) {
-            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
-        }
-        // svcDebugActiveProcess: kernel cria um handle para nos lermos a memoria
-        // do processo alvo. Esse handle precisa ser fechado com svcCloseHandle
-        // quando terminamos.
-        return svcDebugActiveProcess(out_debug_handle, pid);
+    Result attachDebug(uint64_t pid, Handle * /*out_debug_handle*/) {
+        // Compat: o overlay nao guarda mais um Handle local; o sysmod e' que
+        // mantem o debug attached. Mantemos a assinatura para nao quebrar
+        // codigo cliente -- mas o handle retorna sempre INVALID_HANDLE.
+        Result rc = SengClient::initialize();
+        if (R_FAILED(rc)) return rc;
+        return SengClient::attach(pid);
     }
 
-    void detachDebug(Handle debug_handle) {
-        if (debug_handle != INVALID_HANDLE) {
-            svcCloseHandle(debug_handle);
+    void detachDebug(Handle /*debug_handle*/) {
+        // Idem: o handle real vive no sysmod.
+        if (SengClient::isInitialized()) {
+            SengClient::detach();
         }
     }
 

@@ -1,5 +1,6 @@
 #include "Overlay.hpp"
 #include "gui/MainGui.hpp"
+#include "scanner/SengClient.hpp"
 
 #include <switch.h>
 #include <sys/stat.h>
@@ -15,16 +16,14 @@ namespace {
 
 void SwitchEngineOverlay::initServices() {
     ensureStorageDirs();
-
-    // Servicos minimos. Outras inicializacoes (ldr:dmnt, pm:shell) ficam dentro
-    // do MemoryScanner para nao segurar handles enquanto o overlay esta ocioso.
-    pmdmntInitialize();
-    pminfoInitialize();
+    // Conexao com switch-engine-mod (servico "seng"). Se o sysmod nao estiver
+    // instalado/ligado, initialize falha silenciosamente -- a UI mostra o erro
+    // quando o usuario tentar uma operacao.
+    SengClient::initialize();
 }
 
 void SwitchEngineOverlay::exitServices() {
-    pminfoExit();
-    pmdmntExit();
+    SengClient::finalize();
 }
 
 void SwitchEngineOverlay::onShow() {}
