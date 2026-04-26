@@ -30,14 +30,16 @@ EXEFS_SRC        := exefs_src
 # Flags
 #
 # Notas importantes para um overlay Tesla valido:
-#  - -fPIE: NSO precisa ser position-independent.
+#  - -fPIE: NRO precisa ser position-independent.
 #  - -specs=$(DEVKITPRO)/libnx/switch.specs: traz o linker script + crt0
-#    que produzem um NSO com header valido para o nx-ovlloader carregar.
+#    que produzem um ELF que elf2nro converte em NRO valido.
 #  - -Wl,--build-id=sha1: nx-ovlloader+ usa o build-id em alguns paths,
 #    inofensivo se ignorado.
-#  - NAO usamos -shared. Overlays Tesla NAO sao .so dinamicos: sao NSOs
-#    (Nintendo Shared Object) com main(); a unica diferenca em relacao a
-#    um homebrew normal e' o ".ovl" no nome (pasta sdmc:/switch/.overlays/).
+#  - NAO usamos -shared. Overlays Tesla NAO sao .so dinamicos: sao NROs
+#    (Nintendo Relocatable Object) com main() -- exatamente o mesmo formato
+#    de um homebrew .nro normal, apenas com extensao ".ovl" e localizado em
+#    sdmc:/switch/.overlays/. O nx-ovlloader+ carrega NROs, NAO NSOs --
+#    NSOs sao usados por sysmodules (carregados pelo Atmosphere/pm).
 #---------------------------------------------------------------------------------
 ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
@@ -56,6 +58,21 @@ LDFLAGS  = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) \
 LIBS    := -lnx
 
 #---------------------------------------------------------------------------------
+# NROFLAGS: passa o .nacp para o elf2nro embutir o metadata (titulo/autor/versao)
+# dentro do NRO. Sem isso o overlay carrega mas pode aparecer "sem nome" ou
+# ser filtrado pelo Ultrahand na hora de listar.
+# (A regra %.nro: %.elf vem do switch_rules e roda 'elf2nro $< $@ $(NROFLAGS)'.)
+#
+# Importante: usamos $(TOPDIR) (raiz do projeto) e NAO $(CURDIR) -- esta
+# variavel e' reavaliada quando o sub-make roda dentro de build/, onde CURDIR
+# vira build/ e o caminho do nacp fica errado. TOPDIR e' exportado e fica
+# fixo na raiz em ambos os contextos.
+#---------------------------------------------------------------------------------
+ifneq ($(strip $(APP_TITLE)),)
+    NROFLAGS += --nacp=$(TOPDIR)/$(TARGET).nacp
+endif
+
+#---------------------------------------------------------------------------------
 # Bibliotecas (libtesla como submodulo em lib/libtesla)
 #---------------------------------------------------------------------------------
 LIBDIRS := $(PORTLIBS) $(LIBNX) $(TOPDIR)/lib/libtesla
@@ -66,6 +83,11 @@ ifneq ($(BUILD),$(notdir $(CURDIR)))
 
 export OUTPUT   := $(CURDIR)/$(TARGET)
 export TOPDIR   := $(CURDIR)
+
+export NROFLAGS
+export APP_TITLE
+export APP_AUTHOR
+export APP_VERSION
 
 export VPATH    := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
                    $(foreach dir,$(DATA),$(CURDIR)/$(dir))
@@ -107,7 +129,7 @@ $(BUILD):
 
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).ovl $(TARGET).elf
+	@rm -fr $(BUILD) $(TARGET).ovl $(TARGET).nro $(TARGET).nacp $(TARGET).nso $(TARGET).elf
 
 #---------------------------------------------------------------------------------
 else
@@ -117,15 +139,18 @@ DEPENDS := $(OFILES:.o=.d)
 
 #---------------------------------------------------------------------------------
 # Regras de build
-# Tesla overlays sao .ovl => apenas renomeia o NSO
+# Tesla overlays sao NROs renomeados para .ovl. NAO sao NSOs!
+#   ELF -> elf2nro -> .nro -> cp -> .ovl
+# A regra "%.nro: %.elf %.nacp" vem do switch_rules da libnx, e a regra
+# "%.nacp: " usa APP_TITLE/APP_AUTHOR/APP_VERSION definidos la em cima.
 #---------------------------------------------------------------------------------
 all: $(OUTPUT).ovl
 
-$(OUTPUT).ovl: $(OUTPUT).nso
+$(OUTPUT).ovl: $(OUTPUT).nro
 	@cp $< $(OUTPUT).ovl
 	@echo "Built $(notdir $@)"
 
-$(OUTPUT).nso: $(OUTPUT).elf
+$(OUTPUT).nro: $(OUTPUT).elf $(OUTPUT).nacp
 
 $(OUTPUT).elf: $(OFILES)
 

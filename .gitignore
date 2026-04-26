@@ -2,7 +2,9 @@
 build/
 *.elf
 *.nso
+*.nro
 *.nsp
+*.nacp
 *.ovl
 *.npdm
 *.map

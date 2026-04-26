@@ -18,8 +18,12 @@
 #   . .\scripts\install-to-sd.ps1 -SdRoot D:\
 #   . .\scripts\install-to-sd.ps1 -SdRoot E:\ -OverlayOnly
 #   . .\scripts\install-to-sd.ps1 -SdRoot E:\ -SysmodOnly
+#   . .\scripts\install-to-sd.ps1 -SdRoot E:\ -CleanLogs
 #
-# Com -DryRun nao copia, so imprime o que faria.
+# -CleanLogs: apaga sdmc:/switch-engine.log e sdmc:/switch-engine_debug.log
+#             E o .ovl antigo em sdmc:/switch/.overlays/ ANTES de copiar.
+#             Use isso quando estiver desconfiado de "build velho no SD".
+# -DryRun: nao copia, so imprime o que faria.
 # =============================================================================
 
 [CmdletBinding()]
@@ -29,6 +33,7 @@ param(
 
     [switch]$OverlayOnly,
     [switch]$SysmodOnly,
+    [switch]$CleanLogs,
     [switch]$DryRun
 )
 
@@ -67,12 +72,58 @@ function Copy-Verbose {
 }
 
 # -----------------------------------------------------------------------------
+# Cleanup opcional (logs antigos + .ovl antigo)
+# -----------------------------------------------------------------------------
+if ($CleanLogs) {
+    Write-Host "`n[clean]" -ForegroundColor Yellow
+    $toDelete = @(
+        (Join-Path $SdRoot "switch-engine.log"),
+        (Join-Path $SdRoot "switch-engine_debug.log"),
+        (Join-Path $SdRoot "switch-engine_mod.log"),
+        (Join-Path $SdRoot "switch-engine_mod_crash.log"),
+        (Join-Path $SdRoot "switch\.overlays\switch-engine.ovl")
+    )
+    foreach ($p in $toDelete) {
+        if (Test-Path $p) {
+            $sz = (Get-Item $p).Length
+            Write-Host ("  remove {0,-50}  ({1} bytes)" -f $p, $sz)
+            if (-not $DryRun) { Remove-Item -Path $p -Force }
+        } else {
+            Write-Host "  (nao existe) $p"
+        }
+    }
+    # Crash reports antigos do Atmosphere atrapalham o diagnostico do
+    # proximo crash; limpa todos os do nosso TID.
+    $crashDir = Join-Path $SdRoot "atmosphere\crash_reports"
+    if (Test-Path $crashDir) {
+        $tidLower = "420000000053454e"
+        Get-ChildItem $crashDir -Filter "*_$tidLower.*" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host ("  remove {0,-50}  ({1} bytes)" -f $_.FullName, $_.Length)
+            if (-not $DryRun) { Remove-Item -Path $_.FullName -Force }
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
 # Overlay
 # -----------------------------------------------------------------------------
 if (-not $SysmodOnly) {
     Write-Host "`n[overlay]" -ForegroundColor Cyan
-    $overlayDir = Join-Path $SdRoot "switch\.overlays"
-    Copy-Verbose -Src $OvlPath -Dst (Join-Path $overlayDir "switch-engine.ovl")
+    $overlayDir   = Join-Path $SdRoot "switch\.overlays"
+    $overlayDest  = Join-Path $overlayDir "switch-engine.ovl"
+
+    # Compara tamanho atual no SD com o que vamos copiar (para detectar build velho).
+    if ((Test-Path $OvlPath) -and (Test-Path $overlayDest)) {
+        $srcSize = (Get-Item $OvlPath).Length
+        $dstSize = (Get-Item $overlayDest).Length
+        if ($srcSize -eq $dstSize) {
+            Write-Host ("  [warn] tamanho identico no SD ({0} bytes). Verifique se voce rodou 'make' apos editar o codigo." -f $srcSize) -ForegroundColor Yellow
+        } else {
+            Write-Host ("  [info] substituindo .ovl: SD={0} bytes -> novo={1} bytes" -f $dstSize, $srcSize) -ForegroundColor Green
+        }
+    }
+
+    Copy-Verbose -Src $OvlPath -Dst $overlayDest
 }
 
 # -----------------------------------------------------------------------------

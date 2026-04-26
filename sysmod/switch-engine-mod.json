@@ -79,6 +79,7 @@
                 "svcGetThreadId":            "0x25",
                 "svcBreak":                  "0x26",
                 "svcOutputDebugString":      "0x27",
+                "svcReturnFromException":    "0x28",
                 "svcGetInfo":                "0x29",
                 "svcWaitForAddress":         "0x34",
                 "svcSignalToAddress":        "0x35",

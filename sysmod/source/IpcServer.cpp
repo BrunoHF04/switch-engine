@@ -1,5 +1,6 @@
 #include "IpcServer.hpp"
 #include "Debugger.hpp"
+#include "SysmodLog.hpp"
 #include "seng_ipc.hpp"
 
 #include <cstring>
@@ -63,42 +64,71 @@ IpcServer::~IpcServer() {
 // =========================================================================
 Result IpcServer::registerService() {
     SmServiceName name = smEncodeName(seng::kServiceName);
-    return smRegisterService(&m_port_handle, name, false, kPortMaxSessions);
+    Result rc = smRegisterService(&m_port_handle, name, false, kPortMaxSessions);
+    seng::mod::log::write("[ipc] registerService(seng) rc=0x%08X port=0x%X",
+                          rc, m_port_handle);
+    return rc;
 }
 
 // =========================================================================
 Result IpcServer::acceptNewSession() {
     if (m_num_sessions >= kMaxSessions) {
+        seng::mod::log::write("[ipc] acceptNewSession: REJECTED (max=%d)",
+                              kMaxSessions);
         return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
     }
     Handle s = INVALID_HANDLE;
     Result rc = svcAcceptSession(&s, m_port_handle);
-    if (R_FAILED(rc)) return rc;
+    if (R_FAILED(rc)) {
+        seng::mod::log::write("[ipc] svcAcceptSession FAILED rc=0x%08X", rc);
+        return rc;
+    }
     m_handles[m_num_sessions++] = s;
+    seng::mod::log::write("[ipc] session accepted h=0x%X (total=%d)",
+                          s, m_num_sessions);
     return 0;
 }
 
 void IpcServer::closeSession(int idx) {
-    if (idx < 0 || idx >= m_num_sessions) return;
-    svcCloseHandle(m_handles[idx]);
+    if (idx < 0 || idx >= m_num_sessions) {
+        seng::mod::log::write("[ipc] closeSession: idx=%d OUT OF RANGE (sessions=%d)",
+                              idx, m_num_sessions);
+        return;
+    }
+    Handle h = m_handles[idx];
+    svcCloseHandle(h);
     for (int i = idx; i < m_num_sessions - 1; ++i) {
         m_handles[i] = m_handles[i + 1];
     }
+    m_handles[m_num_sessions - 1] = INVALID_HANDLE;
     m_num_sessions--;
+    seng::mod::log::write("[ipc] session closed h=0x%X idx=%d (remaining=%d)",
+                          h, idx, m_num_sessions);
 }
 
 // =========================================================================
 // Dispatcher por command id
 // =========================================================================
-Result IpcServer::handleSession(int /*idx*/) {
+Result IpcServer::handleSession(int idx) {
     void *tls = armGetTls();
     HipcParsedRequest req = hipcParseRequest(tls);
 
     CmifInHdr *in_hdr = alignTo16<CmifInHdr>(req.data.data_words);
+    if (!in_hdr) {
+        seng::mod::log::write("[ipc] handleSession idx=%d: in_hdr=NULL", idx);
+        return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
+    }
     if (in_hdr->magic != kSfciMagic) {
+        // Pode ser o "Control" command (CloseSession etc.). Logamos e
+        // respondemos BadInput; o cliente vai receber o reply e seguir.
+        seng::mod::log::write("[ipc] handleSession idx=%d: bad magic 0x%08X (esperado SFCI)",
+                              idx, in_hdr->magic);
         return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
     }
     void *in_payload = static_cast<void *>(in_hdr + 1);
+
+    seng::mod::log::write("[ipc] cmd=%u idx=%d (sessions=%d)",
+                          in_hdr->cmd_id, idx, m_num_sessions);
 
     switch (static_cast<seng::Cmd>(in_hdr->cmd_id)) {
 
@@ -184,38 +214,79 @@ Result IpcServer::handleSession(int /*idx*/) {
 // =========================================================================
 // Loop principal
 // =========================================================================
+//
+// Estrategia de erros:
+//   - svcReplyAndReceive falha: tipicamente ConnectionClosed (peer fechou).
+//     Identificamos qual sessao ficou ruim pelo idx retornado e fechamos.
+//     Para erros desconhecidos COM idx valido, fechamos mesmo assim para
+//     evitar busy loop em handle quebrado.
+//   - handleSession falha (writeResponse retornou erro): fechamos a sessao.
+//   - Caso o reply em si falhe na proxima iteracao, o erro propaga para
+//     o tratamento acima.
+//
+// O handle de "port" sempre fica em handles[0]. Sessoes vivas em [1..N].
+// =========================================================================
 void IpcServer::runForever() {
     Handle reply_target = INVALID_HANDLE;
 
     while (true) {
-        // Monta vetor [port, sessao_0, sessao_1, ...]
+        // Monta vetor [port, sessao_0, sessao_1, ...]. Limite de seguranca
+        // no caso de m_num_sessions estar corrompido por algum motivo.
         Handle handles[kMaxHandles];
         handles[0] = m_port_handle;
-        for (int i = 0; i < m_num_sessions; ++i) {
+        int copied = 0;
+        for (int i = 0; i < m_num_sessions && i < kMaxSessions; ++i) {
             handles[1 + i] = m_handles[i];
+            ++copied;
         }
-        s32 num = 1 + m_num_sessions;
+        s32 num = 1 + copied;
 
         s32    idx = -1;
         Result rc  = svcReplyAndReceive(&idx, handles, num, reply_target, UINT64_MAX);
+        Handle prev_reply = reply_target;
         reply_target = INVALID_HANDLE;
 
         if (R_FAILED(rc)) {
-            // Sessao fechada por peer? Procura qual handle e remove.
-            if (rc == KERNELRESULT(ConnectionClosed) && idx >= 1) {
+            seng::mod::log::write("[ipc] svcReplyAndReceive rc=0x%08X idx=%d num=%d reply=0x%X",
+                                  rc, idx, num, prev_reply);
+            // idx aponta para a sessao que sinalizou (>=1). Se for valida,
+            // fechamos -- assim nao loopamos em handle ruim.
+            if (idx >= 1 && idx <= copied) {
                 closeSession(idx - 1);
+            } else if (rc == KERNELRESULT(ConnectionClosed)) {
+                // ConnectionClosed sem idx valido: anomalia, mas seguimos.
+                seng::mod::log::write("[ipc] ConnectionClosed sem idx valido (idx=%d)",
+                                      idx);
             }
-            // Outros erros: ignora e continua.
+            continue;
+        }
+
+        if (idx < 0 || idx >= num) {
+            seng::mod::log::write("[ipc] idx fora de range (idx=%d num=%d)", idx, num);
             continue;
         }
 
         if (idx == 0) {
-            acceptNewSession(); // ignora erro: se nao conseguir aceitar, segue
+            // Porta sinalizou: novo cliente quer conectar.
+            acceptNewSession();
         } else {
             int session_idx = idx - 1;
-            if (R_SUCCEEDED(handleSession(session_idx))) {
-                reply_target = m_handles[session_idx];
+            if (session_idx < 0 || session_idx >= m_num_sessions) {
+                seng::mod::log::write("[ipc] session_idx invalido (%d, sessions=%d)",
+                                      session_idx, m_num_sessions);
+                continue;
+            }
+            Result hrc = handleSession(session_idx);
+            if (R_SUCCEEDED(hrc)) {
+                // Confirma que ainda esta dentro do range antes de assinar
+                // o reply target -- closeSession dentro do handler poderia
+                // ter mexido em m_num_sessions.
+                if (session_idx < m_num_sessions) {
+                    reply_target = m_handles[session_idx];
+                }
             } else {
+                seng::mod::log::write("[ipc] handleSession idx=%d FAILED rc=0x%08X",
+                                      session_idx, hrc);
                 closeSession(session_idx);
             }
         }

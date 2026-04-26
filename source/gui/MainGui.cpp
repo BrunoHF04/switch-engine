@@ -10,11 +10,23 @@
 #include <cinttypes>
 #include <cstdio>
 
+namespace {
+    void rawDebugMark(const char *msg) {
+        FILE *fp = std::fopen("sdmc:/switch-engine_debug.log", "a");
+        if (!fp) return;
+        std::fputs(msg, fp);
+        std::fputc('\n', fp);
+        std::fflush(fp);
+        std::fclose(fp);
+    }
+} // namespace
+
 MainGui::MainGui() : m_scanner(std::make_unique<MemoryScanner>()) {
     // Marker explicitamente pedido para diagnostico de boot:
-    // se voce ve esta linha em sdmc:/switch-engine.log, o ovlloader
+    // se voce ve esta linha em sdmc:/switch-engine_debug.log, o ovlloader
     // carregou a NSO, executou main(), instanciou SwitchEngineOverlay
     // e passou o controle para a UI raiz. Restando "apenas" o draw.
+    rawDebugMark("[debug] MainGui ctor");
     seng::log::write("[maingui] ctor");
 }
 
