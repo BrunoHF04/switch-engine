@@ -20,18 +20,18 @@ APP_VERSION      := 0.1.0
 # DEVE bater com o "title_id" no .json
 TARGET_TID       := 420000000053454E
 
-TARGET           := $(notdir $(CURDIR))
+TARGET           := switch-engine-mod
 BUILD            := build
 SOURCES          := source
 INCLUDES         := source ../include
 EXEFS_SRC        := exefs_src
 
-NPDM_JSON        := $(CURDIR)/switch-engine-mod.json
+NPDM_JSON        := $(TOPDIR)/switch-engine-mod.json
 
 #---------------------------------------------------------------------------------
 ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
-CFLAGS  := -g -Wall -Werror -O2 -ffunction-sections \
+CFLAGS  := -g -Wall -Wextra -O2 -ffunction-sections \
            $(ARCH) $(DEFINES) $(INCLUDE) -D__SWITCH__
 
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++20

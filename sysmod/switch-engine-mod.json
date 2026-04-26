@@ -1,5 +1,4 @@
 {
-    "_comment_program": "Switch Engine SysModule. TID escolhido na faixa de homebrew (0x42xxxxxxxxxxxxxx). Se trocar, ajustar tambem em include/seng_ipc.hpp.",
     "name": "switch-engine-mod",
     "title_id":           "0x420000000053454E",
     "title_id_range_min": "0x420000000053454E",
@@ -18,7 +17,6 @@
         "permissions": "0xFFFFFFFFFFFFFFFF"
     },
 
-    "_comment_service_access": "servicos que o sysmod CONSOME (cliente)",
     "service_access": [
         "fsp-srv",
         "pm:dmnt",
@@ -27,7 +25,6 @@
         "psc:m"
     ],
 
-    "_comment_service_host": "servicos que o sysmod EXPOE. 'seng' = Switch ENgine, max 8 chars",
     "service_host": [
         "seng"
     ],
@@ -43,7 +40,6 @@
             }
         },
         {
-            "_comment": "SVCs minimos para qualquer processo + os de DEBUG (0x60-0x6F).",
             "type": "syscalls",
             "value": {
                 "svcSetHeapSize":            "0x01",
@@ -86,15 +82,11 @@
                 "svcGetInfo":                "0x29",
                 "svcWaitForAddress":         "0x34",
                 "svcSignalToAddress":        "0x35",
-
-                "_comment_ipc": "IPC server primitives",
                 "svcCreateSession":          "0x40",
                 "svcAcceptSession":          "0x41",
                 "svcReplyAndReceive":        "0x43",
                 "svcCreateEvent":            "0x45",
                 "svcManageNamedPort":        "0x71",
-
-                "_comment_debug": "AS CHAVES DO REINO: SVCs de debug",
                 "svcDebugActiveProcess":     "0x60",
                 "svcBreakDebugProcess":      "0x61",
                 "svcTerminateDebugProcess":  "0x62",
@@ -121,7 +113,6 @@
             "value": 256
         },
         {
-            "_comment": "allow_debug=true permite ATTACH em outros processos (svcDebugActiveProcess). force_debug=false porque nao queremos ser nos mesmos um alvo de debug.",
             "type": "debug_flags",
             "value": {
                 "allow_debug": true,

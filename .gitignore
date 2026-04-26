@@ -1,0 +1,14 @@
+# Build artifacts (devkitPro)
+build/
+*.elf
+*.nso
+*.nsp
+*.ovl
+*.npdm
+*.map
+exefs/
+sysmod/exefs/
+
+# Logs temporarios
+*.log
+build-log.txt

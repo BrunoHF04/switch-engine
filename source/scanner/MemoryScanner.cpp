@@ -30,10 +30,11 @@ Result MemoryScanner::iterateRwRegions(Handle /*unused*/,
 
         const bool isReadWrite = (info.perm & Perm_R) && (info.perm & Perm_W);
         const bool isInteresting =
-            info.type == MemType_Heap         ||
-            info.type == MemType_CodeWritable ||
-            info.type == MemType_AliasCode    ||
-            info.type == MemType_Stack;
+            info.type == MemType_Heap               ||
+            info.type == MemType_CodeMutable        ||
+            info.type == MemType_ModuleCodeMutable  ||
+            info.type == MemType_MappedMemory       ||
+            info.type == MemType_WeirdMappedMem;
 
         if (isReadWrite && isInteresting && info.size > 0) {
             Result inner = cb(info);

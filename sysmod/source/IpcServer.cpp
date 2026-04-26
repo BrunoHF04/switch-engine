@@ -94,7 +94,7 @@ Result IpcServer::handleSession(int /*idx*/) {
     void *tls = armGetTls();
     HipcParsedRequest req = hipcParseRequest(tls);
 
-    CmifInHdr *in_hdr = alignTo16<CmifInHdr>(req.data_words);
+    CmifInHdr *in_hdr = alignTo16<CmifInHdr>(req.data.data_words);
     if (in_hdr->magic != kSfciMagic) {
         return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
     }
@@ -151,7 +151,7 @@ Result IpcServer::handleSession(int /*idx*/) {
                 return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
             }
             u64   bsize = 0;
-            void *dst   = bufferAddress(&req.recv_buffers.descriptors[0], &bsize);
+            void *dst   = bufferAddress(&req.data.recv_buffers[0], &bsize);
             if (size > bsize)                 size = bsize;
             if (size > seng::kMaxChunkBytes)  size = seng::kMaxChunkBytes;
 
@@ -168,7 +168,7 @@ Result IpcServer::handleSession(int /*idx*/) {
                 return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
             }
             u64         bsize = 0;
-            const void *src   = bufferAddress(&req.send_buffers.descriptors[0], &bsize);
+            const void *src   = bufferAddress(&req.data.send_buffers[0], &bsize);
             if (size > bsize)                 size = bsize;
             if (size > seng::kMaxChunkBytes)  size = seng::kMaxChunkBytes;
 
@@ -197,12 +197,12 @@ void IpcServer::runForever() {
         s32 num = 1 + m_num_sessions;
 
         s32    idx = -1;
-        Result rc  = svcReplyAndReceive(&idx, handles, num, reply_target, U64_MAX);
+        Result rc  = svcReplyAndReceive(&idx, handles, num, reply_target, UINT64_MAX);
         reply_target = INVALID_HANDLE;
 
         if (R_FAILED(rc)) {
             // Sessao fechada por peer? Procura qual handle e remove.
-            if (rc == KERNELRESULT(SessionClosed) && idx >= 1) {
+            if (rc == KERNELRESULT(ConnectionClosed) && idx >= 1) {
                 closeSession(idx - 1);
             }
             // Outros erros: ignora e continua.

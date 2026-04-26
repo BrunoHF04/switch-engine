@@ -27,9 +27,6 @@ extern "C" {
     void __libnx_initheap(void);
     void __appInit(void);
     void __appExit(void);
-
-    // Stubs: sysmods nao precisam de hora nem socket nem userland appservices
-    void __libnx_init_time(void) {}
 }
 
 void __libnx_initheap(void) {
