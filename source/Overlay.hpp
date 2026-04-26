@@ -18,8 +18,8 @@
 
 class SwitchEngineOverlay : public tsl::Overlay {
 public:
-    SwitchEngineOverlay()  = default;
-    ~SwitchEngineOverlay() = default;
+    SwitchEngineOverlay();
+    ~SwitchEngineOverlay() override;
 
     void initServices() override;
     void exitServices() override;

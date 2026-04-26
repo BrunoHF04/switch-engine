@@ -19,15 +19,25 @@ APP_TITLE        := Switch Engine
 APP_AUTHOR       := you
 APP_VERSION      := 0.1.0
 
-TARGET           := $(notdir $(CURDIR))
+TARGET           := switch-engine
 BUILD            := build
-SOURCES          := source source/gui source/scanner
+SOURCES          := source source/gui source/scanner source/util
 DATA             := data
 INCLUDES         := source include
 EXEFS_SRC        := exefs_src
 
 #---------------------------------------------------------------------------------
 # Flags
+#
+# Notas importantes para um overlay Tesla valido:
+#  - -fPIE: NSO precisa ser position-independent.
+#  - -specs=$(DEVKITPRO)/libnx/switch.specs: traz o linker script + crt0
+#    que produzem um NSO com header valido para o nx-ovlloader carregar.
+#  - -Wl,--build-id=sha1: nx-ovlloader+ usa o build-id em alguns paths,
+#    inofensivo se ignorado.
+#  - NAO usamos -shared. Overlays Tesla NAO sao .so dinamicos: sao NSOs
+#    (Nintendo Shared Object) com main(); a unica diferenca em relacao a
+#    um homebrew normal e' o ".ovl" no nome (pasta sdmc:/switch/.overlays/).
 #---------------------------------------------------------------------------------
 ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
@@ -39,7 +49,9 @@ CFLAGS  += $(INCLUDE) -D__SWITCH__
 CXXFLAGS := $(CFLAGS) -fno-exceptions -std=gnu++20
 
 ASFLAGS := -g $(ARCH)
-LDFLAGS  = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS  = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) \
+           -Wl,-Map,$(notdir $*.map) \
+           -Wl,--build-id=sha1
 
 LIBS    := -lnx
 

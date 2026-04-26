@@ -1,21 +1,26 @@
 #pragma once
 
 #include <tesla.hpp>
+
+#include <atomic>
 #include <memory>
+#include <string>
 
 #include "../scanner/MemoryScanner.hpp"
 
 /**
  * MainGui
  *
- * Tela inicial do overlay. Mostra:
- *  - PID/titleId do processo em primeiro plano (com botao para re-detectar).
- *  - Acoes de scan (First Scan, Next Scan, Reset).
- *  - Pagina atual de resultados (lida do results.bin sob demanda).
+ * Tela inicial do overlay. Compoe a UI com:
+ *   - "Target Process": detecta o jogo em foreground (PID + TitleID).
+ *   - "Search value": abre o NumericInputGui para digitar o valor procurado.
+ *   - "First Scan", "Next Scan", "Reset": acoes do scanner via SengClient.
+ *   - "Show Results": abre o ResultsListGui (com poke ao clicar num hit).
+ *   - "Status": ultima mensagem (resultado / erro).
  *
- * O scanner em si e propriedade da MainGui mas as operacoes de scan sao
- * disparadas em outra thread no futuro (TODO) para nao travar o redraw do
- * Tesla. Por enquanto, executamos sincrono e mostramos um spinner.
+ * Os scans rodam SINCRONOS no thread do click handler. O Tesla mantem o
+ * draw em outra thread, entao a UI continua animando, mas inputs ficam
+ * presos durante o scan. (TODO: thread separada para nao travar inputs.)
  */
 class MainGui : public tsl::Gui {
 public:
@@ -24,26 +29,23 @@ public:
 
     tsl::elm::Element *createUI() override;
     void               update() override;
-    bool               handleInput(u64 keysDown, u64 keysHeld,
-                                   const HidTouchState &touchPos,
-                                   HidAnalogStickState  joyStickPosLeft,
-                                   HidAnalogStickState  joyStickPosRight) override;
 
 private:
     std::unique_ptr<MemoryScanner> m_scanner;
 
-    tsl::elm::List         *m_list           = nullptr;
-    tsl::elm::ListItem     *m_targetItem     = nullptr;
-    tsl::elm::ListItem     *m_resultCountItem = nullptr;
+    tsl::elm::ListItem *m_targetItem  = nullptr;
+    tsl::elm::ListItem *m_valueItem   = nullptr;
+    tsl::elm::ListItem *m_resultsItem = nullptr;
+    tsl::elm::ListItem *m_statusItem  = nullptr;
 
-    // Estado da UI
-    uint32_t m_searchValue = 0;
-    size_t   m_currentPage = 0;
-    static constexpr size_t kPageSize = 32;
+    uint64_t    m_titleId      = 0;
+    uint32_t    m_searchValue  = 0;
+    std::string m_status       = "(idle)";
 
-    void rebuildResultsSection();
     void onDetectTarget();
+    void onPickSearchValue();
     void onFirstScan();
     void onNextScan();
     void onResetScan();
+    void onShowResults();
 };
