@@ -1,247 +1,175 @@
 # Switch Engine
 
-Memory Scanner para Nintendo Switch dividido em dois componentes:
+`Switch Engine` e um scanner de memoria para Nintendo Switch dividido em dois componentes:
 
-- **switch-engine.ovl** &mdash; Tesla Overlay (UI), em `./Makefile`.
-- **switch-engine-mod.nsp** &mdash; Atmosphere SysModule com capabilities de debug, em `./sysmod/`.
+- **Overlay Tesla** (`switch-engine.ovl`): interface do usuario para selecionar processo, escanear, refinar resultados e editar valores.
+- **SysModule Atmosphere** (`switch-engine-mod.nsp`): backend com acesso as SVCs de debug, expondo um servico IPC (`seng`) para o overlay.
+
+Esse desenho em duas partes e necessario porque o overlay, isoladamente, nao possui permissao para executar chamadas de debug no processo alvo.
+
+## O que o programa faz
+
+O Switch Engine permite:
+
+- Detectar o processo alvo automaticamente (foreground) ou manualmente por lista.
+- Realizar **First Scan** por valor numerico (`u32`) em regioes relevantes de memoria.
+- Realizar **Next Scan** para refinar resultados com um novo valor.
+- Navegar resultados paginados e aplicar **poke** (escrita de memoria) em enderecos encontrados.
+- Persistir resultados e configuracoes no SD para manter estado entre aberturas.
+
+## Arquitetura
 
 ```
 +---------------------------+         +---------------------------+
-|  switch-engine.ovl        |  IPC    |  switch-engine-mod.nsp    |
-|  (Tesla Overlay)          | <-----> |  (Atmosphere SysModule)   |
-|  - libtesla UI            |  seng:  |  - svcDebugActiveProcess  |
-|  - i18n EN / PT-BR        |         |  - svcReadDebugProcMemory |
-|  - SengClient (cmif)      |         |  - svcWriteDebugProcMem   |
-|  - ResultsStore (sdmc)    |         |  - svcGetProcessList      |
-|  - ProcessListGui         |         |  - sysmod log + crash log |
+|  switch-engine.ovl        |  IPC    |  switch-engine-mod.nsp   |
+|  (Tesla Overlay)          | <-----> |  (Atmosphere SysModule)  |
+|  - UI (libtesla)          |  seng:  |  - svcDebugActiveProcess |
+|  - fluxo de scan          |         |  - svcReadDebugProcess   |
+|  - resultados no SD       |         |  - svcWriteDebugProcess  |
+|  - i18n EN/PT-BR          |         |  - svcGetProcessList     |
 +---------------------------+         +---------------------------+
-                                              |
-                                              v
-                                       sdmc:/atmosphere/contents/
-                                         420000000053454E/
-                                           exefs.nsp
-                                           toolbox.json
-                                           flags/boot2.flag
 ```
 
-Por que dois componentes? Tesla overlays sao carregados pelo `nx-ovlloader` e
-**herdam** as capabilities do loader, que **nao** liberam SVCs de debug. A
-unica forma legitima de chamar `svcDebugActiveProcess` e amigos e ter um NPDM
-proprio &mdash; o que so o sysmod tem.
+### Componentes principais
 
-## Estrutura
+- `source/gui/`: telas do overlay (`MainGui`, `ProcessListGui`, `ResultsListGui`, `NumericInputGui`, `LanguageGui`).
+- `source/scanner/`: cliente IPC, scanner e armazenamento de resultados.
+- `source/util/`: logger e sistema de idioma.
+- `sysmod/source/`: servidor IPC, camada de debug e logs do sysmod.
+- `include/seng_ipc.hpp`: contrato IPC compartilhado entre overlay e sysmod.
 
-```
-switch-engine/
-|- Makefile                    # builda o overlay (.ovl via elf2nro)
-|- README.md
-|- include/
-|  |- seng_ipc.hpp             # contrato IPC (compartilhado overlay+sysmod)
-|- scripts/
-|  |- install-to-sd.ps1        # PowerShell deploy (overlay + sysmod, com -CleanLogs)
-|- source/                     # codigo do OVERLAY
-|  |- main.cpp                 # __appInit, fsdevMountSdmc, i18n::load, tsl::loop
-|  |- Overlay.hpp / .cpp       # frame wrapper, dispatcher inicial
-|  |- gui/
-|  |  |- MainGui.hpp / .cpp           # tela principal (categorias + status)
-|  |  |- NumericInputGui.hpp / .cpp   # keypad numerico
-|  |  |- ResultsListGui.hpp / .cpp    # paginacao + poke value
-|  |  |- LanguageGui.hpp / .cpp       # picker EN / PT-BR
-|  |  |- ProcessListGui.hpp / .cpp    # picker manual de processo
-|  |- scanner/
-|  |  |- MemoryScanner.hpp / .cpp
-|  |  |- ProcessUtils.hpp / .cpp      # delega tudo p/ SengClient
-|  |  |- ResultsStore.hpp / .cpp
-|  |  |- SengClient.hpp / .cpp        # cmif client p/ servico "seng"
-|  |- util/
-|     |- Logger.hpp / .cpp            # log persistente sdmc:/switch/switch-engine/log.txt
-|     |- Language.hpp / .cpp          # i18n (EN / PT-BR), config.ini
-|- sysmod/                     # codigo do SYSMODULE
-   |- Makefile                       # gera exefs.nsp, injeta SENG_BUILD_TAG
-   |- switch-engine-mod.json         # NPDM (capabilities de debug)
-   |- toolbox.json                   # metadata p/ sysmod-manager
-   |- source/
-      |- main.cpp                    # __appInit, heap, server loop, exception handler
-      |- Debugger.hpp / .cpp         # wrapper svcDebug*, listProcesses
-      |- IpcServer.hpp / .cpp        # cmif server (commands 0-9)
-      |- SysmodLog.hpp / .cpp        # log persistente + crash log com build tag
-```
+## Tecnologias e linguagem
 
-## Title ID e configuracao do Atmosphere
+- Linguagem principal: **C++**.
+- SDK/Ferramentas: **devkitPro** com `switch-dev`.
+- UI: **libtesla**.
+- Ambiente alvo: Nintendo Switch com **Atmosphere CFW**.
+- Script de deploy no Windows: **PowerShell** (`scripts/install-to-sd.ps1`).
 
-O sysmod usa o TID **`0x420000000053454E`** (faixa de homebrew, terminado em
-`SEN` em ASCII para "Switch ENgine"). Esse mesmo TID aparece em 3 lugares e
-**precisa ser identico nos tres**:
+## Requisitos
 
-1. `sysmod/switch-engine-mod.json` -> `title_id` / `title_id_range_min/max`.
-2. `sysmod/Makefile` -> `TARGET_TID := 420000000053454E`.
-3. `include/seng_ipc.hpp` -> `kSysmodTitleId`.
+Antes de compilar, garanta:
 
-O Atmosphere reconhece um sysmod homebrew quando ele aparece em:
-
-```
-sdmc:/atmosphere/contents/<TID>/
-    exefs.nsp                 # binario do sysmod (gerado pelo Makefile)
-    toolbox.json              # opcional, p/ sysmod-manager listar
-    flags/
-        boot2.flag            # ARQUIVO VAZIO; presenca = autostart no boot
-```
-
-Sem `flags/boot2.flag` o sysmod nao roda. Com ele, o Atmosphere o inicia logo
-apos o `boot2` do firmware (antes mesmo do menu HOME aparecer), e nesse ponto
-ele ja registra o servico `seng` em `sm:`.
-
-Voce pode trocar o TID se ja tiver outro sysmod usando esse. Use a faixa
-`0x420000xxxxxxxxxx` ou `0x430000xxxxxxxxxx` para nao colidir com sysmods
-oficiais nem outros homebrew populares (sys-clk, sys-ftpd, sys-botbase).
+- devkitPro instalado corretamente.
+- Pacote `switch-dev` instalado (`pacman -S switch-dev`).
+- Ferramentas `npdmtool`, `elf2nro` e `build_pfs0` disponiveis.
+- Submodulo `lib/libtesla` presente no projeto.
 
 ## Build
 
-Pre-requisitos:
-
-- devkitPro com `switch-dev` instalado (`pacman -S switch-dev`).
-- `npdmtool`, `elf2nro`, `build_pfs0` (ja vem com o `switch-tools` do devkitPro).
-- libtesla em `lib/libtesla` (submodulo Git).
-
 ```bash
-git submodule add https://github.com/WerWolv/libtesla lib/libtesla
-
-# 1) Sysmod (gera sysmod/exefs.nsp)
+# 1) Compilar sysmod
 make -C sysmod
 
-# 2) Overlay (gera switch-engine.ovl como NRO + NACP)
+# 2) Compilar overlay
 make
 ```
 
-**Nota sobre formato de overlay:** o `nx-ovlloader+` espera **NRO** (com NACP
-embutido), nao NSO. O Makefile usa `elf2nro` + `NROFLAGS` para gerar o `.ovl`
-corretamente; tentar carregar um NSO renomeado faz o overlay sumir
-silenciosamente do menu Tesla.
+Artefatos principais:
 
-**Build tag do sysmod:** o Makefile do sysmod injeta `SENG_BUILD_TAG=<epoch>`
-em cada compilacao. Esse tag aparece no header de
-`sdmc:/switch-engine_mod.log` para confirmar qual binario esta rodando
-(util quando o sysmod parece nao recarregar apos uma atualizacao).
+- `sysmod/exefs.nsp`
+- `switch-engine.ovl`
 
-## Instalacao no console
+## Instalacao no Nintendo Switch
 
-Via script PowerShell (Windows):
+### Metodo recomendado (Windows / PowerShell)
 
 ```powershell
-# Copia overlay + sysmod e limpa logs antigos da TID 420000000053454E
 .\scripts\install-to-sd.ps1 -SDDrive F: -CleanLogs
 ```
 
-Via shell manual:
+Esse comando copia overlay + sysmod para o SD e limpa logs antigos quando solicitado.
 
-```bash
-SD=/run/media/$USER/SDCARD
+### Metodo manual
 
-# 1) Sysmod
-mkdir -p $SD/atmosphere/contents/420000000053454E/flags
-cp sysmod/exefs.nsp     $SD/atmosphere/contents/420000000053454E/exefs.nsp
-cp sysmod/toolbox.json  $SD/atmosphere/contents/420000000053454E/toolbox.json
-touch                   $SD/atmosphere/contents/420000000053454E/flags/boot2.flag
+Copie os arquivos para o SD nesta estrutura:
 
-# 2) Overlay
-mkdir -p $SD/switch/.overlays
-cp switch-engine.ovl    $SD/switch/.overlays/
-
-# 3) Reboot necessario para o boot2 carregar o sysmod pela primeira vez.
+```text
+sdmc:/atmosphere/contents/420000000053454E/exefs.nsp
+sdmc:/atmosphere/contents/420000000053454E/toolbox.json
+sdmc:/atmosphere/contents/420000000053454E/flags/boot2.flag
+sdmc:/switch/.overlays/switch-engine.ovl
 ```
 
-Ou simplesmente: `make -C sysmod install SDMOUNT=$SD`.
+Importante:
 
-## Verificacao
+- O arquivo `boot2.flag` deve existir (arquivo vazio) para autostart do sysmod.
+- Apos instalar/atualizar o sysmod, faca **reboot completo** do console.
 
-Apos reboot:
+## Como usar
 
-1. Abra um jogo qualquer.
-2. Pressione `L + dpad-down + RS` (atalho default do Tesla-Menu).
-3. Selecione "Switch Engine".
-4. **"Pick process..."** -> escolha o jogo manualmente, ou **"Detect foreground"**
-   -> sysmod tenta `pmdmntGetApplicationProcessId`.
-5. "First Scan" -> deve gerar `sdmc:/switch/switch-engine/results.bin`.
+1. Abra um jogo.
+2. Abra o Tesla Menu (atalho padrao: `L + D-Pad Down + RS`).
+3. Selecione `Switch Engine`.
+4. Escolha o alvo:
+   - `Detect foreground` (automatico), ou
+   - `Pick process` (manual).
+5. Defina o valor de busca.
+6. Execute `First Scan`.
+7. Altere o valor no jogo e rode `Next Scan`.
+8. Abra resultados e use poke quando necessario.
 
 ## Idioma
 
-A tela principal tem uma categoria **Settings -> Language** com EN / PT-BR.
-A escolha e gravada em `sdmc:/switch/switch-engine/config.ini` e carregada no
-proximo open do overlay (`seng::i18n::load()` em `main.cpp`). Reabrir o
-overlay e necessario para os widgets ja construidos pegarem as novas strings.
+O projeto possui suporte a:
 
-Tabela de strings em `source/util/Language.cpp` (`kStrings[][2]`); para
-adicionar um idioma novo, estenda `enum class Lang`, amplie a tabela para
-`Lang::Count` colunas e atualize `parseLangCode` / `currentCode`.
+- `PT-BR`
+- `EN`
 
-## Logs
+A selecao de idioma e salva em:
 
-| Arquivo | Origem | Propossito |
-|---------|--------|----------|
-| `sdmc:/switch/switch-engine/log.txt` | Overlay (`util/Logger`) | Eventos da UI, IPC client, scan |
-| `sdmc:/switch-engine_mod.log` | Sysmod (`SysmodLog`) | Boot do sysmod, IPC server, comandos atendidos |
-| `sdmc:/switch-engine_mod_crash.log` | Sysmod (handler) | Contexto de crash (PC, LR, registers, build tag) |
-| `sdmc:/atmosphere/crash_reports/` | Atmosphere | Crash dumps do firmware (cobre o sysmod tambem) |
+- `sdmc:/switch/switch-engine/config.ini`
 
-Os logs do sysmod incluem `SENG_BUILD_TAG=<epoch>` no header para garantir
-que voce esta lendo do binario certo apos um redeploy.
+As strings ficam em:
 
-## Diagnostico rapido
+- `source/util/Language.cpp`
 
-Se "Detect foreground" mostrar `error` ou `pmdmnt` retornar PID 1 (kernel),
-use **"Pick process..."** &mdash; o overlay chama
-`SengClient::listProcesses()` que internamente faz `svcGetProcessList` no
-sysmod e retorna ate 64 entradas `{pid, tid}`. Cada entrada e classificada
-em "App" / "Sysmod" / "Process" pela faixa do TID.
+## Logs e diagnostico
 
-Se a lista vier vazia ou so com `PID 0`, o sysmod **nao esta rodando**.
-Cheque na ordem:
+Arquivos importantes:
 
-```bash
-# 1) flag de boot2 existe?
-ls $SD/atmosphere/contents/420000000053454E/flags/boot2.flag
+- `sdmc:/switch/switch-engine/log.txt` (overlay)
+- `sdmc:/switch-engine_mod.log` (sysmod)
+- `sdmc:/switch-engine_mod_crash.log` (crash do sysmod)
+- `sdmc:/atmosphere/crash_reports/` (crash reports gerais do sistema)
 
-# 2) hash do exefs.nsp bate com o build local?
-sha256sum sysmod/exefs.nsp \
-  $SD/atmosphere/contents/420000000053454E/exefs.nsp
+Se o scanner nao listar processos ou falhar no alvo:
 
-# 3) sysmod logou alguma coisa?
-head -30 $SD/switch-engine_mod.log
+1. Verifique se `boot2.flag` esta presente.
+2. Verifique se o `exefs.nsp` foi atualizado corretamente no SD.
+3. Leia `sdmc:/switch-engine_mod.log`.
+4. Reinicie o console por power-cycle (nao apenas sleep/wake).
 
-# 4) crash dumps do firmware?
-ls $SD/atmosphere/crash_reports/
-```
+## Contrato IPC atual (`seng`)
 
-Sysmods so sao carregados em **boot completo** &mdash; sleep / wake do
-console nao recarrega. Power-cycle obrigatorio depois de atualizar o
-`exefs.nsp`.
+Comandos implementados:
 
-## Contrato IPC (servico `seng`)
+- `GetVersion`
+- `GetForegroundPid`
+- `GetTitleId`
+- `AttachProcess`
+- `DetachProcess`
+- `QueryMemory`
+- `ReadMemory`
+- `WriteMemory`
+- `IsAttached`
+- `ListProcesses`
 
-| Cmd | Nome              | In                | Out / Buffer        |
-|----:|-------------------|-------------------|---------------------|
-| 0   | GetVersion        | -                 | u32 version         |
-| 1   | GetForegroundPid  | -                 | u64 pid             |
-| 2   | GetTitleId        | u64 pid           | u64 tid             |
-| 3   | AttachProcess     | u64 pid           | -                   |
-| 4   | DetachProcess     | -                 | -                   |
-| 5   | QueryMemory       | u64 addr          | MemoryRegion (32 B) |
-| 6   | ReadMemory        | u64 addr, u64 sz  | Type-B out buffer   |
-| 7   | WriteMemory       | u64 addr, u64 sz  | Type-A in  buffer   |
-| 8   | IsAttached        | -                 | u8                  |
-| 9   | ListProcesses     | u64 max           | u64 count + Type-B  |
+Limitacoes atuais:
 
-Buffers limitados a `seng::kMaxChunkBytes = 64 KB` por chamada.
-`ListProcesses` devolve ate `seng::kMaxProcessList = 64` entradas
-`{u64 pid, u64 tid}` (16 B cada).
+- Buffer maximo por operacao de leitura/escrita: `64 KB`.
+- Lista de processos: ate `64` entradas por chamada.
 
-## Proximos passos
+## Roadmap tecnico
 
-- [ ] Scanner: comparadores `>=`, `<=`, `between`, `changed`, `unchanged`.
-- [ ] Scanner: thread separada para nao travar redraw do Tesla.
-- [ ] UI: picker de tipo (u8/u16/u32/u64/f32/f64) na busca e no poke.
-- [ ] UI: marcar processo "atual" na ProcessListGui com `[*]`.
-- [ ] Sysmod: investigar `pmdmntGetApplicationProcessId` retornando PID 1
-  em alguns titulos / firmwares (logs ja instrumentados).
-- [ ] Sysmod: comando `ReadMemoryRange(start, end, stride)` para acelerar
-  first-scan reduzindo ida-volta IPC.
+- Comparadores adicionais de scan (`>=`, `<=`, `between`, `changed`, `unchanged`).
+- Execucao de scan em thread separada para melhor responsividade da UI.
+- Picker de tipo numerico (u8/u16/u32/u64/f32/f64) para busca e poke.
+- Marcacao de processo atual na lista de processos.
+- Investigacao de cenarios onde foreground retorna PID 1 em alguns firmwares/titulos.
+- Possivel comando de leitura por faixa para reduzir overhead de IPC no first scan.
+
+## Creditos
+
+Desenvolvido por **Bruno Fernandes**.  
+Portfolio: [bruno-fernandes.online](https://bruno-fernandes.online)
