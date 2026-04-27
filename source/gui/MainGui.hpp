@@ -43,6 +43,8 @@ private:
     std::string m_status       = "(idle)";
 
     void onDetectTarget();
+    void onPickProcess();
+    void onProcessPicked(uint64_t pid, uint64_t tid);
     void onPickSearchValue();
     void onFirstScan();
     void onNextScan();

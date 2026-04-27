@@ -130,32 +130,51 @@ Result IpcServer::handleSession(int idx) {
     seng::mod::log::write("[ipc] cmd=%u idx=%d (sessions=%d)",
                           in_hdr->cmd_id, idx, m_num_sessions);
 
+    // Logs de diagnostico abaixo usam SOMENTE %u/%X (32-bit) para evitar
+    // qualquer dependencia de %llu/%zu no vsnprintf do newlib do Switch.
+    // Pids/tids sao splitados em high32+low32.
     switch (static_cast<seng::Cmd>(in_hdr->cmd_id)) {
 
         case seng::Cmd::GetVersion: {
+            seng::mod::log::writeRaw("[ipc] -> GetVersion");
             u32 v = seng::kIpcVersion;
             return writeResponse(0, &v, sizeof(v));
         }
 
         case seng::Cmd::GetForegroundPid: {
+            seng::mod::log::writeRaw("[ipc] -> GetForegroundPid begin");
             u64 pid = 0;
             Result rc = Debugger::getForegroundPid(&pid);
+            seng::mod::log::write("[ipc] GetForegroundPid end rc=0x%08X pidHi=%u pidLo=%u",
+                                  rc,
+                                  static_cast<u32>(pid >> 32),
+                                  static_cast<u32>(pid & 0xFFFFFFFFu));
             return writeResponse(rc, &pid, sizeof(pid));
         }
 
         case seng::Cmd::GetTitleId: {
+            seng::mod::log::writeRaw("[ipc] -> GetTitleId begin");
             u64 pid = *static_cast<u64 *>(in_payload);
             u64 tid = 0;
             Result rc = Debugger::getTitleId(pid, &tid);
+            seng::mod::log::write("[ipc] GetTitleId pidLo=%u tidHi=%X tidLo=%X rc=0x%08X",
+                                  static_cast<u32>(pid & 0xFFFFFFFFu),
+                                  static_cast<u32>(tid >> 32),
+                                  static_cast<u32>(tid & 0xFFFFFFFFu),
+                                  rc);
             return writeResponse(rc, &tid, sizeof(tid));
         }
 
         case seng::Cmd::AttachProcess: {
             u64 pid = *static_cast<u64 *>(in_payload);
-            return writeResponse(Debugger::attach(pid), nullptr, 0);
+            Result rc = Debugger::attach(pid);
+            seng::mod::log::write("[ipc] AttachProcess pidLo=%u rc=0x%08X",
+                                  static_cast<u32>(pid & 0xFFFFFFFFu), rc);
+            return writeResponse(rc, nullptr, 0);
         }
 
         case seng::Cmd::DetachProcess: {
+            seng::mod::log::writeRaw("[ipc] -> DetachProcess");
             Debugger::detach();
             return writeResponse(0, nullptr, 0);
         }
@@ -187,6 +206,42 @@ Result IpcServer::handleSession(int idx) {
 
             Result rc = Debugger::readMemory(addr, dst, size);
             return writeResponse(rc, &size, sizeof(size));
+        }
+
+        case seng::Cmd::ListProcesses: {
+            seng::mod::log::writeRaw("[ipc] -> ListProcesses begin");
+
+            u64 max_entries = *static_cast<u64 *>(in_payload);
+            if (req.meta.num_recv_buffers < 1) {
+                seng::mod::log::writeRaw("[ipc] ListProcesses: NO RECV BUFFER");
+                return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput),
+                                     nullptr, 0);
+            }
+            u64   bsize = 0;
+            void *dst   = bufferAddress(&req.data.recv_buffers[0], &bsize);
+
+            seng::mod::log::write("[ipc] ListProcesses maxLo=%u bsizeLo=%u dstNull=%u",
+                                  static_cast<u32>(max_entries & 0xFFFFFFFFu),
+                                  static_cast<u32>(bsize & 0xFFFFFFFFu),
+                                  dst == nullptr ? 1u : 0u);
+
+            // Cap pelo tamanho do buffer fornecido E pelo max do cliente E
+            // pelo nosso hard cap interno.
+            const size_t can_fit = bsize / sizeof(seng::ProcessEntry);
+            size_t cap = max_entries < can_fit ? max_entries : can_fit;
+            if (cap > seng::kMaxProcessList) cap = seng::kMaxProcessList;
+
+            size_t actual = 0;
+            Result rc = Debugger::listProcesses(
+                static_cast<seng::ProcessEntry *>(dst), cap, &actual);
+
+            seng::mod::log::write("[ipc] ListProcesses end cap=%u actual=%u rc=0x%08X",
+                                  static_cast<u32>(cap),
+                                  static_cast<u32>(actual),
+                                  rc);
+
+            u64 count_out = actual;
+            return writeResponse(rc, &count_out, sizeof(count_out));
         }
 
         case seng::Cmd::WriteMemory: {

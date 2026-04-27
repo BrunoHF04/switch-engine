@@ -1,4 +1,5 @@
 #include "Debugger.hpp"
+#include "SysmodLog.hpp"
 
 #include <mutex>
 #include <cstring>
@@ -49,11 +50,24 @@ namespace Debugger {
     }
 
     Result getForegroundPid(uint64_t *out_pid) {
-        return pmdmntGetApplicationProcessId(out_pid);
+        seng::mod::log::writeRaw("[dbg] getForegroundPid: calling pmdmntGetApplicationProcessId");
+        Result rc = pmdmntGetApplicationProcessId(out_pid);
+        u64 pid = out_pid ? *out_pid : 0;
+        seng::mod::log::write("[dbg] getForegroundPid rc=0x%08X pidLo=%u",
+                              rc, static_cast<u32>(pid & 0xFFFFFFFFu));
+        return rc;
     }
 
     Result getTitleId(uint64_t pid, uint64_t *out_tid) {
-        return pminfoGetProgramId(out_tid, pid);
+        seng::mod::log::write("[dbg] getTitleId pidLo=%u: calling pminfoGetProgramId",
+                              static_cast<u32>(pid & 0xFFFFFFFFu));
+        Result rc = pminfoGetProgramId(out_tid, pid);
+        u64 tid = out_tid ? *out_tid : 0;
+        seng::mod::log::write("[dbg] getTitleId rc=0x%08X tidHi=%X tidLo=%X",
+                              rc,
+                              static_cast<u32>(tid >> 32),
+                              static_cast<u32>(tid & 0xFFFFFFFFu));
+        return rc;
     }
 
     Result queryMemory(uint64_t addr, seng::MemoryRegion *out) {
@@ -90,6 +104,60 @@ namespace Debugger {
         }
         // svcWriteDebugProcessMemory pede void* nao-const por API; respeitamos.
         return svcWriteDebugProcessMemory(g_debug, const_cast<void*>(src), addr, size);
+    }
+
+    Result listProcesses(seng::ProcessEntry *out,
+                         size_t              max,
+                         size_t             *out_count) {
+        seng::mod::log::write("[dbg] listProcesses begin max=%u outNull=%u outCntNull=%u",
+                              static_cast<u32>(max),
+                              out == nullptr ? 1u : 0u,
+                              out_count == nullptr ? 1u : 0u);
+
+        if (!out || !out_count || max == 0) {
+            seng::mod::log::writeRaw("[dbg] listProcesses: BadInput");
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        }
+        *out_count = 0;
+
+        // svcGetProcessList preenche um array de PIDs e retorna a contagem
+        // real preenchida em num_out. Cap em seng::kMaxProcessList por
+        // seguranca (e' o que a IPC entrega ao cliente de qualquer forma).
+        u64 pids[seng::kMaxProcessList] = {};
+        s32 num_out = 0;
+        const s32 cap = static_cast<s32>(
+            max < seng::kMaxProcessList ? max : seng::kMaxProcessList);
+
+        seng::mod::log::write("[dbg] listProcesses: svcGetProcessList cap=%d",
+                              cap);
+        Result rc = svcGetProcessList(&num_out, pids, cap);
+        seng::mod::log::write("[dbg] listProcesses: svcGetProcessList rc=0x%08X num=%d",
+                              rc, num_out);
+        if (R_FAILED(rc)) return rc;
+
+        size_t k = 0;
+        for (s32 i = 0; i < num_out && k < max; ++i) {
+            u64 tid = 0;
+            // pminfoGetProgramId so' funciona para processos com program id
+            // registrado (apps/sysmodulos com NPDM). Pra kernel/init etc
+            // ignora (tid=0). Nao queremos abortar a lista por causa disso.
+            Result trc = pminfoGetProgramId(&tid, pids[i]);
+            if (R_FAILED(trc)) tid = 0;
+
+            seng::mod::log::write("[dbg]   [%d] pidLo=%u tidLo=%X trc=0x%08X",
+                                  i,
+                                  static_cast<u32>(pids[i] & 0xFFFFFFFFu),
+                                  static_cast<u32>(tid & 0xFFFFFFFFu),
+                                  trc);
+
+            out[k].pid = pids[i];
+            out[k].tid = tid;
+            ++k;
+        }
+        *out_count = k;
+        seng::mod::log::write("[dbg] listProcesses end k=%u",
+                              static_cast<u32>(k));
+        return 0;
     }
 
 } // namespace Debugger

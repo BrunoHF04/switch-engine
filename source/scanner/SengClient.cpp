@@ -111,6 +111,42 @@ namespace SengClient {
     }
 
     // ---------------------------------------------------------------------
+    // ListProcesses: usa Type-B (server escreve buffer com array de
+    // ProcessEntry; reply payload tem o count efetivo).
+    // ---------------------------------------------------------------------
+    Result listProcesses(seng::ProcessEntry *out,
+                         size_t              max,
+                         size_t             *out_count) {
+        if (!out || !out_count) {
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        }
+        if (max > seng::kMaxProcessList) max = seng::kMaxProcessList;
+
+        struct InArgs  { u64 max; }   __attribute__((packed));
+        struct OutArgs { u64 count; } __attribute__((packed));
+
+        InArgs  in{ max };
+        OutArgs o{ 0 };
+
+        Result rc = serviceDispatchInOut(
+            &g_srv, static_cast<u32>(seng::Cmd::ListProcesses), in, o,
+            .buffer_attrs = {
+                SfBufferAttr_HipcMapAlias | SfBufferAttr_Out,
+            },
+            .buffers = {
+                { out, max * sizeof(seng::ProcessEntry) },
+            }
+        );
+        if (R_SUCCEEDED(rc)) {
+            *out_count = static_cast<size_t>(o.count);
+            if (*out_count > max) *out_count = max;
+        } else {
+            *out_count = 0;
+        }
+        return rc;
+    }
+
+    // ---------------------------------------------------------------------
     // WriteMemory: usa Type-A (cliente envia, server le).
     // ---------------------------------------------------------------------
     Result writeMemory(uint64_t addr, const void *src, size_t size, size_t *out_written) {

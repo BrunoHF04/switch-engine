@@ -1,7 +1,11 @@
 #include "NumericInputGui.hpp"
 
+#include "../util/Language.hpp"
+
 #include <cinttypes>
 #include <cstdio>
+
+namespace i18n = seng::i18n;
 
 NumericInputGui::NumericInputGui(std::string title,
                                  uint64_t    initial,
@@ -16,12 +20,14 @@ tsl::elm::Element *NumericInputGui::createUI() {
     auto *frame = new tsl::elm::OverlayFrame(m_title, "Switch Engine");
     auto *list  = new tsl::elm::List();
 
-    list->addItem(new tsl::elm::CategoryHeader("Value (decimal)"));
-    m_display = new tsl::elm::ListItem("Value");
+    list->addItem(new tsl::elm::CategoryHeader(
+        i18n::tr(i18n::S::ValueDecimalHeader)));
+    m_display = new tsl::elm::ListItem(i18n::tr(i18n::S::ValueLabel));
     refreshDisplay();
     list->addItem(m_display);
 
-    list->addItem(new tsl::elm::CategoryHeader("Digits"));
+    list->addItem(new tsl::elm::CategoryHeader(
+        i18n::tr(i18n::S::DigitsHeader)));
     for (int d = 0; d <= 9; ++d) {
         char label[2] = { static_cast<char>('0' + d), 0 };
         auto *btn = new tsl::elm::ListItem(label);
@@ -35,8 +41,9 @@ tsl::elm::Element *NumericInputGui::createUI() {
         list->addItem(btn);
     }
 
-    list->addItem(new tsl::elm::CategoryHeader("Edit"));
-    auto *bs = new tsl::elm::ListItem("Backspace");
+    list->addItem(new tsl::elm::CategoryHeader(
+        i18n::tr(i18n::S::EditHeader)));
+    auto *bs = new tsl::elm::ListItem(i18n::tr(i18n::S::Backspace));
     bs->setClickListener([this](u64 keys) {
         if (keys & HidNpadButton_A) {
             this->backspace();
@@ -46,7 +53,7 @@ tsl::elm::Element *NumericInputGui::createUI() {
     });
     list->addItem(bs);
 
-    auto *cl = new tsl::elm::ListItem("Clear");
+    auto *cl = new tsl::elm::ListItem(i18n::tr(i18n::S::Clear));
     cl->setClickListener([this](u64 keys) {
         if (keys & HidNpadButton_A) {
             this->clearAll();
@@ -56,8 +63,9 @@ tsl::elm::Element *NumericInputGui::createUI() {
     });
     list->addItem(cl);
 
-    list->addItem(new tsl::elm::CategoryHeader("Action"));
-    auto *cf = new tsl::elm::ListItem("Confirm");
+    list->addItem(new tsl::elm::CategoryHeader(
+        i18n::tr(i18n::S::ActionHeader)));
+    auto *cf = new tsl::elm::ListItem(i18n::tr(i18n::S::Confirm));
     cf->setClickListener([this](u64 keys) {
         if (keys & HidNpadButton_A) {
             if (m_onConfirm) m_onConfirm(m_value);
@@ -68,7 +76,7 @@ tsl::elm::Element *NumericInputGui::createUI() {
     });
     list->addItem(cf);
 
-    auto *cn = new tsl::elm::ListItem("Cancel");
+    auto *cn = new tsl::elm::ListItem(i18n::tr(i18n::S::Cancel));
     cn->setClickListener([](u64 keys) {
         if (keys & HidNpadButton_A) {
             tsl::goBack();

@@ -31,8 +31,14 @@ NPDM_JSON        := $(TOPDIR)/switch-engine-mod.json
 #---------------------------------------------------------------------------------
 ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 
+# Build tag unico por compilacao (epoch). Usado pelo SysmodLog::init para
+# carimbar o log com a versao real do binario rodando -- diagnosticar
+# rapidamente se o sysmod no SD ainda e' antigo.
+SENG_BUILD_TAG := $(shell date +%s)
+
 CFLAGS  := -g -Wall -Wextra -O2 -ffunction-sections \
-           $(ARCH) $(DEFINES) $(INCLUDE) -D__SWITCH__
+           $(ARCH) $(DEFINES) $(INCLUDE) -D__SWITCH__ \
+           -DSENG_BUILD_TAG=\"$(SENG_BUILD_TAG)\"
 
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++20
 

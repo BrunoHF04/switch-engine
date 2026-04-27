@@ -27,6 +27,7 @@ namespace seng {
         ReadMemory         = 6,   // (u64 addr,u64 size) + outBuf  -> ()
         WriteMemory        = 7,   // (u64 addr,u64 size) + inBuf   -> ()
         IsAttached         = 8,   // ()              -> u8
+        ListProcesses      = 9,   // (u64 max) + outBuf<ProcessEntry[]> -> u64 count
     };
 
     // Layout fixo: enviado por wire. NAO mexer alinhamento sem bumpar versao.
@@ -40,6 +41,15 @@ namespace seng {
     };
     static_assert(sizeof(MemoryRegion) == 32, "MemoryRegion ABI mudou");
 
-    constexpr size_t kMaxChunkBytes = 0x10000; // 64 KB por Read/Write IPC
+    // Layout para Cmd::ListProcesses. Enviada como elemento de array em
+    // buffer Type-B. tid==0 indica processo sem TID conhecido (kernel/sysmod).
+    struct ProcessEntry {
+        uint64_t pid;
+        uint64_t tid;
+    };
+    static_assert(sizeof(ProcessEntry) == 16, "ProcessEntry ABI mudou");
+
+    constexpr size_t kMaxChunkBytes  = 0x10000; // 64 KB por Read/Write IPC
+    constexpr size_t kMaxProcessList = 64;       // hard cap p/ ListProcesses
 
 } // namespace seng

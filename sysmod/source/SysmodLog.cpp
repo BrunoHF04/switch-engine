@@ -31,11 +31,25 @@ namespace seng::mod::log {
     } // namespace
 
     void init() {
-        // Marca inicio com um cabecalho discreto; ajuda a separar runs.
-        char header[96];
+        // Marca inicio com cabecalho que inclui wallclock E build hash.
+        // O build hash e' fornecido pelo Makefile (gera string unica por
+        // build) -- assim, mesmo que rodemos a mesma sessao com sysmod
+        // antigo, vemos imediatamente qual binario esta vivo.
+        u64        nano = armTicksToNs(armGetSystemTick());
+        time_t     now  = std::time(nullptr);
+
+        // Tag do build: armado por -DSENG_BUILD_TAG=... no Makefile.
+        // Fallback simples se nao definir.
+#ifndef SENG_BUILD_TAG
+#define SENG_BUILD_TAG "unknown"
+#endif
+
+        char header[160];
         std::snprintf(header, sizeof(header),
-                      "\n=== switch-engine-mod start (tick=%llu) ===\n",
-                      static_cast<unsigned long long>(armGetSystemTick()));
+                      "\n=== switch-engine-mod start tick=%llu wallclock=%ld build=%s ===\n",
+                      static_cast<unsigned long long>(nano / 1'000'000ULL),
+                      static_cast<long>(now),
+                      SENG_BUILD_TAG);
         appendLine(kRunLog, header);
     }
 

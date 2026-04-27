@@ -22,6 +22,7 @@
 #include <tesla.hpp>
 
 #include "Overlay.hpp"
+#include "util/Language.hpp"
 #include "util/Logger.hpp"
 
 #include <switch.h>
@@ -58,6 +59,12 @@ int main(int argc, char **argv) {
         // Tenta logar via stdout (pode nao chegar a lugar nenhum) e sai limpo.
         return mountRc;
     }
+
+    // Carrega idioma persistido em sdmc:/switch/switch-engine/config.ini.
+    // Tem que ser DEPOIS de fsdevMountSdmc e ANTES de tsl::loop (que ja'
+    // instancia o MainGui, que le tr() na criacao da UI).
+    seng::i18n::load();
+    seng::log::write("[main] i18n loaded lang=%s", seng::i18n::currentCode());
 
     seng::log::write("[main] entry argc=%d argv0=%s", argc,
                      (argc > 0 && argv && argv[0]) ? argv[0] : "(null)");

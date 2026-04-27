@@ -3,15 +3,19 @@
 #include "NumericInputGui.hpp"
 #include "../scanner/ResultsStore.hpp"
 #include "../scanner/SengClient.hpp"
+#include "../util/Language.hpp"
 
 #include <cinttypes>
 #include <cstdio>
+
+namespace i18n = seng::i18n;
 
 ResultsListGui::ResultsListGui(uint64_t targetPid, size_t initialPage)
     : m_targetPid(targetPid), m_currentPage(initialPage) {}
 
 tsl::elm::Element *ResultsListGui::createUI() {
-    auto *frame = new tsl::elm::OverlayFrame("Switch Engine", "Results");
+    auto *frame = new tsl::elm::OverlayFrame("Switch Engine",
+                                              i18n::tr(i18n::S::ResultsTitle));
     m_list = new tsl::elm::List();
     rebuild();
     frame->setContent(m_list);
@@ -54,15 +58,15 @@ void ResultsListGui::rebuild() {
     const size_t totalPages = m_total == 0 ? 1
                                            : (m_total + kPageSize - 1) / kPageSize;
 
-    char hdrBuf[64];
+    char hdrBuf[80];
     std::snprintf(hdrBuf, sizeof(hdrBuf),
-                  "%zu hits | page %zu/%zu",
+                  i18n::tr(i18n::S::PageInfoFmt),
                   m_total, m_currentPage + 1, totalPages);
     m_list->addItem(new tsl::elm::CategoryHeader(hdrBuf));
 
     if (m_total == 0) {
-        m_list->addItem(new tsl::elm::ListItem("(no results)",
-                                               "run First Scan"));
+        m_list->addItem(new tsl::elm::ListItem(i18n::tr(i18n::S::NoResults),
+                                               i18n::tr(i18n::S::RunFirstScan)));
         return;
     }
 
@@ -84,7 +88,7 @@ void ResultsListGui::rebuild() {
                 if (!(keys & HidNpadButton_A)) return false;
 
                 tsl::changeTo<NumericInputGui>(
-                    "Poke value (uint32)",
+                    std::string(i18n::tr(i18n::S::PokeValueTitle)),
                     static_cast<uint64_t>(0),
                     static_cast<uint64_t>(UINT32_MAX),
                     [addr, pidCaptured](uint64_t v) {
@@ -106,10 +110,12 @@ void ResultsListGui::rebuild() {
     // Navegacao entre paginas (rebuild in-place).
     // -------------------------------------------------------------------
     if (totalPages > 1) {
-        m_list->addItem(new tsl::elm::CategoryHeader("Navigation"));
+        m_list->addItem(new tsl::elm::CategoryHeader(
+            i18n::tr(i18n::S::Navigation)));
 
         if (m_currentPage > 0) {
-            auto *prev = new tsl::elm::ListItem("Previous Page");
+            auto *prev = new tsl::elm::ListItem(
+                i18n::tr(i18n::S::PreviousPage));
             prev->setClickListener([this](u64 keys) {
                 if (!(keys & HidNpadButton_A)) return false;
                 if (m_currentPage == 0) return false;
@@ -124,7 +130,8 @@ void ResultsListGui::rebuild() {
         }
 
         if (m_currentPage + 1 < totalPages) {
-            auto *next = new tsl::elm::ListItem("Next Page");
+            auto *next = new tsl::elm::ListItem(
+                i18n::tr(i18n::S::NextPage));
             next->setClickListener([this, totalPages](u64 keys) {
                 if (!(keys & HidNpadButton_A)) return false;
                 if (m_currentPage + 1 >= totalPages) return false;

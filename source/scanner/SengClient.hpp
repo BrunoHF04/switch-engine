@@ -37,4 +37,12 @@ namespace SengClient {
     Result readMemory(uint64_t addr, void *dst, size_t size, size_t *out_read);
     Result writeMemory(uint64_t addr, const void *src, size_t size, size_t *out_written);
 
+    // Lista todos os processos vivos no sistema.
+    //   out:       array com pelo menos 'max' entradas, alocado pelo cliente.
+    //   max:       capacidade do buffer (entries, nao bytes).
+    //   out_count: numero de entries efetivamente preenchidas (pode ser 0).
+    Result listProcesses(seng::ProcessEntry *out,
+                         size_t              max,
+                         size_t             *out_count);
+
 } // namespace SengClient

@@ -28,4 +28,11 @@ namespace Debugger {
     Result readMemory(uint64_t addr, void *dst, size_t size);
     Result writeMemory(uint64_t addr, const void *src, size_t size);
 
+    // Lista ate 'max' processos vivos no sistema. Para cada PID, tenta
+    // resolver o TitleID via pminfo; se nao tiver (kernel/sysmod), tid=0.
+    // *out_count recebe o numero de entradas preenchidas.
+    Result listProcesses(seng::ProcessEntry *out,
+                         size_t              max,
+                         size_t             *out_count);
+
 } // namespace Debugger
