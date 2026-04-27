@@ -10,14 +10,30 @@ namespace Debugger {
         std::mutex g_mtx;
         Handle     g_debug = INVALID_HANDLE;
         uint64_t   g_pid   = 0;
+
+        /** pm:shell opcional — fallback quando pmdmnt devolve PID invalido. */
+        bool g_pmshell_ready = false;
     }
 
     void init() {
-        // Nada que precise de inicializacao ativa por enquanto.
+        Result prc = pmshellInitialize();
+        if (R_SUCCEEDED(prc)) {
+            g_pmshell_ready = true;
+            seng::mod::log::writeRaw("[dbg] pmshellInitialize OK");
+        } else {
+            seng::mod::log::write("[dbg] pmshellInitialize FAILED rc=0x%08X", prc);
+        }
     }
 
     void shutdown() {
         detach();
+    }
+
+    void releaseAuxServicesForExit() {
+        if (g_pmshell_ready) {
+            pmshellExit();
+            g_pmshell_ready = false;
+        }
     }
 
     Result attach(uint64_t pid) {
@@ -50,11 +66,33 @@ namespace Debugger {
     }
 
     Result getForegroundPid(uint64_t *out_pid) {
-        seng::mod::log::writeRaw("[dbg] getForegroundPid: calling pmdmntGetApplicationProcessId");
+        if (!out_pid) {
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        }
+
+        seng::mod::log::writeRaw("[dbg] getForegroundPid: pmdmntGetApplicationProcessId");
         Result rc = pmdmntGetApplicationProcessId(out_pid);
-        u64 pid = out_pid ? *out_pid : 0;
-        seng::mod::log::write("[dbg] getForegroundPid rc=0x%08X pidLo=%u",
+        u64 pid = *out_pid;
+        seng::mod::log::write("[dbg] getForegroundPid pmdmnt rc=0x%08X pidLo=%u",
                               rc, static_cast<u32>(pid & 0xFFFFFFFFu));
+
+        // PID 0 invalido; PID 1 costuma ser kernel — nao e' um app de jogo.
+        if (R_SUCCEEDED(rc) && pid > 1) {
+            return rc;
+        }
+
+        if (g_pmshell_ready) {
+            u64 shellPid = 0;
+            Result rc2 = pmshellGetApplicationProcessIdForShell(&shellPid);
+            seng::mod::log::write(
+                "[dbg] getForegroundPid pmshell fallback rc=0x%08X pidLo=%u",
+                rc2, static_cast<u32>(shellPid & 0xFFFFFFFFu));
+            if (R_SUCCEEDED(rc2) && shellPid > 1) {
+                *out_pid = shellPid;
+                return 0;
+            }
+        }
+
         return rc;
     }
 
@@ -130,13 +168,16 @@ namespace Debugger {
 
         seng::mod::log::write("[dbg] listProcesses: svcGetProcessList cap=%d",
                               cap);
-        Result rc = svcGetProcessList(&num_out, pids, cap);
+        Result rc = svcGetProcessList(&num_out, pids, static_cast<u32>(cap));
         seng::mod::log::write("[dbg] listProcesses: svcGetProcessList rc=0x%08X num=%d",
                               rc, num_out);
         if (R_FAILED(rc)) return rc;
 
         size_t k = 0;
         for (s32 i = 0; i < num_out && k < max; ++i) {
+            if (pids[i] == 0) {
+                continue;
+            }
             u64 tid = 0;
             // pminfoGetProgramId so' funciona para processos com program id
             // registrado (apps/sysmodulos com NPDM). Pra kernel/init etc

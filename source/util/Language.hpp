@@ -7,15 +7,15 @@
  *
  * Filosofia:
  *   - Sem libs (gettext, fmt, etc.) -- alocacao zero, lookup O(1).
- *   - Dois idiomas embutidos: English (default) e Portugues-BR.
- *   - Cada string tem um StringId; a tabela de traducoes e' um array
- *     paralelo no .cpp.
+ *   - Idiomas: EN (default), PT-BR, ES, JA.
+ *   - Cada string tem um StringId; a tabela de traducoes tem uma coluna por
+ *     idioma no .cpp (EN, PT-BR, ES, JA).
  *   - tr(id) retorna const char* (ponteiro para tabela estatica). Strings
  *     de format ficam com seus %s/%d -- quem chama faz o snprintf.
  *
  * Persistencia:
  *   - Arquivo: sdmc:/switch/switch-engine/config.ini
- *   - Formato: linha unica "lang=en" ou "lang=pt-BR".
+ *   - Formato: linha unica "lang=en", "lang=pt-BR", "lang=es", "lang=ja".
  *   - load() chamado uma vez no boot do overlay (apos fsdevMountSdmc).
  *   - save() chamado quando o usuario muda na tela de Language.
  *
@@ -30,6 +30,8 @@ namespace seng::i18n {
     enum class Lang : uint8_t {
         En   = 0,
         PtBr = 1,
+        Es   = 2,
+        Ja   = 3,
     };
 
     enum class S : uint16_t {
@@ -100,12 +102,24 @@ namespace seng::i18n {
         LanguageTitle,
         LanguageEnglish,
         LanguagePortugueseBr,
+        LanguageSpanish,
+        LanguageJapanese,
 
         // ---- ProcessList tela ----
         ProcessListTitle,
         ProcessListEmpty,
         ProcessListCountFmt,           // "%zu processes"
         ProcessListErrorFmt,           // "error (rc=0x%08X)"
+
+        // ---- Creditos ----
+        CreditsMenu,
+        CreditsScreenTitle,
+        CreditsAppName,
+        CreditsAppTagline,
+        CreditsDeveloperName,
+        CreditsDeveloperRole,
+        CreditsPortfolioUrl,
+        CreditsPortfolioRole,
 
         // ---- Subtitulo do overlay ----
         OverlaySubtitle,

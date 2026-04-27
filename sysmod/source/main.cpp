@@ -24,6 +24,10 @@
  */
 
 #include <switch.h>
+#include <switch/runtime/hosversion.h>
+#include <switch/services/applet.h>
+#include <switch/services/set.h>
+#include <switch/services/time.h>
 
 #include <cstring>
 
@@ -63,6 +67,26 @@ void __appInit(void) {
     rc = smInitialize();
     if (R_FAILED(rc)) diagAbortWithResult(rc);
 
+    // Versao do HOS (pmdmnt/pminfo dependem do contexto inicializado como no
+    // libnx padrao — ver switchbrew/libnx#257.)
+    if (hosversionGet() == 0) {
+        rc = setsysInitialize();
+        if (R_SUCCEEDED(rc)) {
+            SetSysFirmwareVersion fw{};
+            rc = setsysGetFirmwareVersion(&fw);
+            if (R_SUCCEEDED(rc)) {
+                hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro));
+            }
+            setsysExit();
+        }
+    }
+
+    rc = appletInitialize();
+    if (R_FAILED(rc)) diagAbortWithResult(rc);
+
+    rc = timeInitialize();
+    if (R_FAILED(rc)) diagAbortWithResult(rc);
+
     rc = pmdmntInitialize();
     if (R_FAILED(rc)) diagAbortWithResult(rc);
 
@@ -78,7 +102,7 @@ void __appInit(void) {
     fsdevMountSdmc();
 
     seng::mod::log::init();
-    seng::mod::log::writeRaw("[init] sm/pm/fs/sdmc OK");
+    seng::mod::log::writeRaw("[init] sm/setsys+hos/applet/time/pm/fs/sdmc OK");
 }
 
 void __appExit(void) {
@@ -86,6 +110,9 @@ void __appExit(void) {
     seng::mod::log::close();
     fsdevUnmountAll();
     fsExit();
+    timeExit();
+    appletExit();
+    Debugger::releaseAuxServicesForExit();
     pminfoExit();
     pmdmntExit();
     smExit();

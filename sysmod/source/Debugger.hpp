@@ -17,6 +17,9 @@ namespace Debugger {
     void   init();
     void   shutdown();
 
+    /** Libera sessoes extras (pm:shell) antes do teardown do libnx em __appExit. */
+    void   releaseAuxServicesForExit();
+
     Result attach(uint64_t pid);
     void   detach();
     bool   isAttached();

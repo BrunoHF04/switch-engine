@@ -39,6 +39,10 @@ tsl::elm::Element *LanguageGui::createUI() {
                                i18n::Lang::En));
     list->addItem(makeLangItem(i18n::tr(i18n::S::LanguagePortugueseBr),
                                i18n::Lang::PtBr));
+    list->addItem(makeLangItem(i18n::tr(i18n::S::LanguageSpanish),
+                               i18n::Lang::Es));
+    list->addItem(makeLangItem(i18n::tr(i18n::S::LanguageJapanese),
+                               i18n::Lang::Ja));
 
     frame->setContent(list);
     return frame;
