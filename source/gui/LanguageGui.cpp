@@ -11,8 +11,6 @@ namespace {
         tsl::goBack();
     }
 
-    // Cria um item do tipo radio: aparece o label + um marcador no value
-    // ("[*]" ou "[ ]") indicando se e' o idioma corrente.
     tsl::elm::ListItem *makeLangItem(const char *label, i18n::Lang l) {
         auto *it = new tsl::elm::ListItem(label,
                                           i18n::current() == l ? "[*]" : "[ ]");
@@ -39,10 +37,6 @@ tsl::elm::Element *LanguageGui::createUI() {
                                i18n::Lang::En));
     list->addItem(makeLangItem(i18n::tr(i18n::S::LanguagePortugueseBr),
                                i18n::Lang::PtBr));
-    list->addItem(makeLangItem(i18n::tr(i18n::S::LanguageSpanish),
-                               i18n::Lang::Es));
-    list->addItem(makeLangItem(i18n::tr(i18n::S::LanguageJapanese),
-                               i18n::Lang::Ja));
 
     frame->setContent(list);
     return frame;

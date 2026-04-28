@@ -7,22 +7,21 @@
  *
  * Filosofia:
  *   - Sem libs (gettext, fmt, etc.) -- alocacao zero, lookup O(1).
- *   - Idiomas: EN (default), PT-BR, ES, JA.
- *   - Cada string tem um StringId; a tabela de traducoes tem uma coluna por
- *     idioma no .cpp (EN, PT-BR, ES, JA).
+ *   - Idiomas embutidos: English (default) e Portugues-BR.
+ *   - Cada string tem um StringId; a tabela de traducoes e' um array
+ *     paralelo no .cpp ([En, PtBr]).
  *   - tr(id) retorna const char* (ponteiro para tabela estatica). Strings
  *     de format ficam com seus %s/%d -- quem chama faz o snprintf.
  *
  * Persistencia:
  *   - Arquivo: sdmc:/switch/switch-engine/config.ini
- *   - Formato: linha unica "lang=en", "lang=pt-BR", "lang=es", "lang=ja".
+ *   - Formato: linha unica "lang=en" ou "lang=pt-BR".
  *   - load() chamado uma vez no boot do overlay (apos fsdevMountSdmc).
  *   - save() chamado quando o usuario muda na tela de Language.
  *
  * Reload de UI:
- *   - Trocar o idioma NAO altera ListItems ja' criados (titulo nao muda
- *     em runtime). O usuario precisa fechar+reabrir o overlay, ou voltar
- *     para o MainGui (que e' rebuildado a cada changeTo).
+ *   - Trocar o idioma NAO altera ListItems ja' construidos. Reabra o overlay
+ *     ou volte ao MainGui (rebuildado a cada changeTo).
  */
 
 namespace seng::i18n {
@@ -30,8 +29,6 @@ namespace seng::i18n {
     enum class Lang : uint8_t {
         En   = 0,
         PtBr = 1,
-        Es   = 2,
-        Ja   = 3,
     };
 
     enum class S : uint16_t {
@@ -58,27 +55,26 @@ namespace seng::i18n {
 
         // ---- MainGui status messages (alguns sao formats) ----
         StatusError,
-        StatusDetectFailedFmt,         // "detect failed (rc=0x%08X)"
+        StatusDetectFailedFmt,
         StatusTargetDetected,
         StatusScanning,
-        StatusFirstScanFailedFmt,      // "first scan failed (rc=0x%08X)"
-        StatusFirstScanResultFmt,      // "first scan: %zu hits"
+        StatusFirstScanFailedFmt,
+        StatusFirstScanResultFmt,
         StatusNoTargetRunDetect,
         StatusFiltering,
-        StatusNextScanFailedFmt,       // "next scan failed (rc=0x%08X)"
-        StatusNextScanResultFmt,       // "next scan: %zu hits"
+        StatusNextScanFailedFmt,
+        StatusNextScanResultFmt,
         StatusNoPreviousResults,
         StatusResultsCleared,
         StatusNoResultsToShow,
         StatusReopenToApply,
-        StatusProcessPickedFmt,        // "process selected (PID %llu)"
+        StatusProcessPickedFmt,
 
-        // ---- ListItem suffixes ----
-        HitsSuffixFmt,                 // "%zu hits"
+        HitsSuffixFmt,
 
         // ---- ResultsListGui ----
         ResultsTitle,
-        PageInfoFmt,                   // "%zu hits | page %zu/%zu"
+        PageInfoFmt,
         NoResults,
         RunFirstScan,
         Navigation,
@@ -102,14 +98,12 @@ namespace seng::i18n {
         LanguageTitle,
         LanguageEnglish,
         LanguagePortugueseBr,
-        LanguageSpanish,
-        LanguageJapanese,
 
         // ---- ProcessList tela ----
         ProcessListTitle,
         ProcessListEmpty,
-        ProcessListCountFmt,           // "%zu processes"
-        ProcessListErrorFmt,           // "error (rc=0x%08X)"
+        ProcessListCountFmt,
+        ProcessListErrorFmt,
 
         // ---- Creditos ----
         CreditsMenu,
@@ -121,10 +115,8 @@ namespace seng::i18n {
         CreditsPortfolioUrl,
         CreditsPortfolioRole,
 
-        // ---- Subtitulo do overlay ----
         OverlaySubtitle,
 
-        // SENTINEL
         Count,
     };
 
@@ -138,7 +130,6 @@ namespace seng::i18n {
 
     const char *tr(S id);
 
-    // Formata "lang=xx" tag persistida. Util para UIs que mostrem o codigo.
     const char *currentCode();
 
 } // namespace seng::i18n
