@@ -7,9 +7,9 @@
  *
  * Filosofia:
  *   - Sem libs (gettext, fmt, etc.) -- alocacao zero, lookup O(1).
- *   - Idiomas embutidos: English (default) e Portugues-BR.
+ *   - Dois idiomas embutidos: English (default) e Portugues-BR.
  *   - Cada string tem um StringId; a tabela de traducoes e' um array
- *     paralelo no .cpp ([En, PtBr]).
+ *     paralelo no .cpp.
  *   - tr(id) retorna const char* (ponteiro para tabela estatica). Strings
  *     de format ficam com seus %s/%d -- quem chama faz o snprintf.
  *
@@ -20,8 +20,9 @@
  *   - save() chamado quando o usuario muda na tela de Language.
  *
  * Reload de UI:
- *   - Trocar o idioma NAO altera ListItems ja' construidos. Reabra o overlay
- *     ou volte ao MainGui (rebuildado a cada changeTo).
+ *   - Trocar o idioma NAO altera ListItems ja' criados (titulo nao muda
+ *     em runtime). O usuario precisa fechar+reabrir o overlay, ou voltar
+ *     para o MainGui (que e' rebuildado a cada changeTo).
  */
 
 namespace seng::i18n {
@@ -55,26 +56,27 @@ namespace seng::i18n {
 
         // ---- MainGui status messages (alguns sao formats) ----
         StatusError,
-        StatusDetectFailedFmt,
+        StatusDetectFailedFmt,         // "detect failed (rc=0x%08X)"
         StatusTargetDetected,
         StatusScanning,
-        StatusFirstScanFailedFmt,
-        StatusFirstScanResultFmt,
+        StatusFirstScanFailedFmt,      // "first scan failed (rc=0x%08X)"
+        StatusFirstScanResultFmt,      // "first scan: %zu hits"
         StatusNoTargetRunDetect,
         StatusFiltering,
-        StatusNextScanFailedFmt,
-        StatusNextScanResultFmt,
+        StatusNextScanFailedFmt,       // "next scan failed (rc=0x%08X)"
+        StatusNextScanResultFmt,       // "next scan: %zu hits"
         StatusNoPreviousResults,
         StatusResultsCleared,
         StatusNoResultsToShow,
         StatusReopenToApply,
-        StatusProcessPickedFmt,
+        StatusProcessPickedFmt,        // "process selected (PID %llu)"
 
-        HitsSuffixFmt,
+        // ---- ListItem suffixes ----
+        HitsSuffixFmt,                 // "%zu hits"
 
         // ---- ResultsListGui ----
         ResultsTitle,
-        PageInfoFmt,
+        PageInfoFmt,                   // "%zu hits | page %zu/%zu"
         NoResults,
         RunFirstScan,
         Navigation,
@@ -102,21 +104,20 @@ namespace seng::i18n {
         // ---- ProcessList tela ----
         ProcessListTitle,
         ProcessListEmpty,
-        ProcessListCountFmt,
-        ProcessListErrorFmt,
+        ProcessListCountFmt,           // "%zu processes"
+        ProcessListErrorFmt,           // "error (rc=0x%08X)"
 
-        // ---- Creditos ----
-        CreditsMenu,
-        CreditsScreenTitle,
-        CreditsAppName,
-        CreditsAppTagline,
+        // ---- Creditos (MainGui rodape) ----
+        CreditsHeader,
+        CreditsDeveloperLabel,
         CreditsDeveloperName,
-        CreditsDeveloperRole,
-        CreditsPortfolioUrl,
-        CreditsPortfolioRole,
+        CreditsWebLabel,
+        CreditsWebUrl,
 
+        // ---- Subtitulo do overlay ----
         OverlaySubtitle,
 
+        // SENTINEL
         Count,
     };
 
@@ -130,6 +131,7 @@ namespace seng::i18n {
 
     const char *tr(S id);
 
+    // Formata "lang=xx" tag persistida. Util para UIs que mostrem o codigo.
     const char *currentCode();
 
 } // namespace seng::i18n

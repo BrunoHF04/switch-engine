@@ -1,6 +1,5 @@
 #include "MainGui.hpp"
 
-#include "CreditsGui.hpp"
 #include "LanguageGui.hpp"
 #include "NumericInputGui.hpp"
 #include "ProcessListGui.hpp"
@@ -167,16 +166,17 @@ tsl::elm::Element *MainGui::createUI() {
     });
     list->addItem(langItem);
 
-    auto *creditsItem = new tsl::elm::ListItem(i18n::tr(i18n::S::CreditsMenu),
-                                                "");
-    creditsItem->setClickListener([](u64 keys) {
-        if (keys & HidNpadButton_A) {
-            tsl::changeTo<CreditsGui>();
-            return true;
-        }
-        return false;
-    });
-    list->addItem(creditsItem);
+    // -------------------------------------------------------------------
+    // Creditos (informativo; sem acao)
+    // -------------------------------------------------------------------
+    list->addItem(new tsl::elm::CategoryHeader(
+        i18n::tr(i18n::S::CreditsHeader)));
+    list->addItem(new tsl::elm::ListItem(
+        i18n::tr(i18n::S::CreditsDeveloperLabel),
+        i18n::tr(i18n::S::CreditsDeveloperName)));
+    list->addItem(new tsl::elm::ListItem(
+        i18n::tr(i18n::S::CreditsWebLabel),
+        i18n::tr(i18n::S::CreditsWebUrl)));
 
     frame->setContent(list);
     return frame;
