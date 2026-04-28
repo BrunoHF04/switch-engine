@@ -23,6 +23,8 @@
 namespace SengClient {
 
     Result initialize();
+    /** Tenta `smGetService("seng")` ate `maxWaitNs` (evita bloqueio indefinido). */
+    Result initializeTimed(u64 maxWaitNs);
     void   finalize();
     bool   isInitialized();
 

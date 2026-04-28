@@ -28,4 +28,8 @@ public:
     void onHide() override;
 
     std::unique_ptr<tsl::Gui> loadInitialGui() override;
+
+private:
+    /** true se `SengClient::initializeTimed` conseguiu sessao com o sysmod. */
+    bool m_sengReady = false;
 };

@@ -97,6 +97,13 @@ namespace seng::i18n {
             /* CreditsWebLabel     */ { "Portfolio",             "Portfolio"              },
             /* CreditsWebUrl       */ { "bruno-fernandes.online","bruno-fernandes.online" },
 
+            // ---- Sysmod ausente ----
+            /* SysmodMissingTitle  */ { "Sysmodule",               "Sysmodule"              },
+            /* SysmodMissingBody   */ { "Error: Sysmodule not detected",
+                                        "Erro: Sysmodule n\u00E3o detectado" },
+            /* SysmodMissingHint   */ { "Install TID 0x420000000053454E + reboot",
+                                        "Instale TID 0x420000000053454E + reinicie" },
+
             // ---- Subtitulo do overlay ----
             /* OverlaySubtitle     */ { "Memory Scanner v0.2",   "Buscador de Memoria v0.2" },
         };

@@ -114,6 +114,11 @@ namespace seng::i18n {
         CreditsWebLabel,
         CreditsWebUrl,
 
+        // ---- Sysmod ausente (SysmodMissingGui) ----
+        SysmodMissingTitle,
+        SysmodMissingBody,
+        SysmodMissingHint,
+
         // ---- Subtitulo do overlay ----
         OverlaySubtitle,
 

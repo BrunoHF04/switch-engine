@@ -46,6 +46,27 @@ namespace SengClient {
         return 0;
     }
 
+    Result initializeTimed(u64 maxWaitNs) {
+        if (g_initialized.load()) return 0;
+
+        constexpr u64 kSliceNs = 50'000'000ULL; // 50 ms
+        u64             waited   = 0;
+        Result          lastRc   = 0;
+
+        while (waited < maxWaitNs) {
+            std::memset(&g_srv, 0, sizeof(g_srv));
+            lastRc = connect();
+            if (R_SUCCEEDED(lastRc)) {
+                g_initialized.store(true);
+                return 0;
+            }
+            svcSleepThread(kSliceNs);
+            waited += kSliceNs;
+        }
+        std::memset(&g_srv, 0, sizeof(g_srv));
+        return lastRc;
+    }
+
     void finalize() {
         if (!g_initialized.exchange(false)) return;
         serviceClose(&g_srv);

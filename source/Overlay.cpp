@@ -1,12 +1,15 @@
 #include "Overlay.hpp"
 
 #include "gui/MainGui.hpp"
+#include "gui/SysmodMissingGui.hpp"
 #include "scanner/SengClient.hpp"
+#include "seng_ipc.hpp"
 #include "util/Logger.hpp"
 
 #include <switch.h>
 #include <sys/stat.h>
 
+#include <cinttypes>
 #include <cstdio>
 
 namespace {
@@ -50,22 +53,35 @@ SwitchEngineOverlay::~SwitchEngineOverlay() {
 
 void SwitchEngineOverlay::initServices() {
     rawDebugMark("[debug] initServices begin");
-    seng::log::write("[overlay] initServices begin");
+    m_sengReady = false;
 
+    // Logs em SD so depois de mkdir: reduz risco de I/O antes de paths existirem.
     ensureStorageDirs();
+    rawDebugMark("[debug] initServices after ensureStorageDirs");
 
-    // Conexao com switch-engine-mod (servico "seng"). Se o sysmod nao estiver
-    // instalado/ligado, initialize falha silenciosamente -- a UI mostra o erro
-    // quando o usuario tentar uma operacao.
-    Result rc = SengClient::initialize();
-    if (R_FAILED(rc)) {
-        seng::log::write("[overlay] SengClient::initialize FAILED rc=0x%08X", rc);
-    } else {
-        seng::log::write("[overlay] SengClient::initialize OK");
+    {
+        char tidbuf[96];
+        std::snprintf(
+            tidbuf, sizeof(tidbuf),
+            "[debug] expected sysmod TID 0x%016" PRIx64 " (seng)",
+            static_cast<unsigned long long>(seng::kSysmodTitleId));
+        rawDebugMark(tidbuf);
     }
 
-    rawDebugMark("[debug] initServices end");
-    seng::log::write("[overlay] initServices end");
+    // Ate ~2 s tentando "seng" (evita bloqueio indefinido se SM/sysmod atrasar).
+    constexpr u64 kSengConnectMaxNs = 2'000'000'000ULL;
+    Result rc = SengClient::initializeTimed(kSengConnectMaxNs);
+    m_sengReady = R_SUCCEEDED(rc);
+
+    seng::log::write("[overlay] initServices seng probe rc=0x%08X ready=%d",
+                     rc, m_sengReady ? 1 : 0);
+    if (R_FAILED(rc)) {
+        seng::log::write("[overlay] sysmod unreachable (service seng). TID esperado=0x%016" PRIx64,
+                         static_cast<unsigned long long>(seng::kSysmodTitleId));
+    }
+
+    rawDebugMark("[debug] initServices passed seng probe");
+    seng::log::write("[overlay] initServices end (pos-probe seng)");
 }
 
 void SwitchEngineOverlay::exitServices() {
@@ -83,6 +99,11 @@ void SwitchEngineOverlay::onHide() {
 }
 
 std::unique_ptr<tsl::Gui> SwitchEngineOverlay::loadInitialGui() {
+    if (!m_sengReady) {
+        rawDebugMark("[debug] loadInitialGui -> SysmodMissingGui");
+        seng::log::write("[overlay] loadInitialGui -> SysmodMissingGui");
+        return initially<SysmodMissingGui>();
+    }
     rawDebugMark("[debug] loadInitialGui -> MainGui");
     seng::log::write("[overlay] loadInitialGui -> MainGui");
     return initially<MainGui>();
