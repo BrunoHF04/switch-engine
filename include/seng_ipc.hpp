@@ -15,7 +15,7 @@ namespace seng {
 
     constexpr uint64_t kSysmodTitleId = 0x420000000053454EULL;
 
-    constexpr uint32_t kIpcVersion = 1;
+    constexpr uint32_t kIpcVersion = 2;
 
     enum class Cmd : uint32_t {
         GetVersion         = 0,   // ()              -> u32
@@ -27,7 +27,9 @@ namespace seng {
         ReadMemory         = 6,   // (u64 addr,u64 size) + outBuf  -> ()
         WriteMemory        = 7,   // (u64 addr,u64 size) + inBuf   -> ()
         IsAttached         = 8,   // ()              -> u8
-        ListProcesses      = 9,   // (u64 max) + outBuf<ProcessEntry[]> -> u64 count
+        ListProcessesLegacy = 9,  // legado: mesmo que 10 (lista processos)
+        ListProcesses      = 10,  // (u64 max) + outBuf<ProcessEntry[]> -> u64 count
+        StartMemoryScan    = 11,  // (u64 pid, u32 value) -> u64 total_hits; escreve results.bin
     };
 
     // Layout fixo: enviado por wire. NAO mexer alinhamento sem bumpar versao.

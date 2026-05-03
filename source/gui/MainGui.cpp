@@ -5,6 +5,7 @@
 #include "ProcessListGui.hpp"
 #include "ResultsListGui.hpp"
 #include "../scanner/ProcessUtils.hpp"
+#include "../scanner/Scanner.hpp"
 #include "../scanner/ResultsStore.hpp"
 #include "../scanner/SengClient.hpp"
 #include "../util/Language.hpp"
@@ -209,7 +210,7 @@ void MainGui::onDetectTarget() {
     uint64_t pid = 0;
     uint64_t tid = 0;
 
-    Result rc = ProcessUtils::getForegroundApplication(&pid, &tid);
+    Result rc = Scanner::detectForegroundAfterProcessList(&pid, &tid);
     if (R_FAILED(rc) || pid == 0) {
         char buf[64];
         std::snprintf(buf, sizeof(buf),

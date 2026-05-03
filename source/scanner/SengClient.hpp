@@ -47,4 +47,7 @@ namespace SengClient {
                          size_t              max,
                          size_t             *out_count);
 
+    /** Cmd 11: primeiro plano de scan no sysmod (attach + svc + results.bin). */
+    Result startMemoryScan(uint64_t pid, uint32_t value, uint64_t *out_total_hits);
+
 } // namespace SengClient

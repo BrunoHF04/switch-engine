@@ -168,6 +168,29 @@ namespace SengClient {
     }
 
     // ---------------------------------------------------------------------
+    // StartMemoryScan (cmd 11): scan completo no sysmod.
+    // ---------------------------------------------------------------------
+    Result startMemoryScan(uint64_t pid, uint32_t value, uint64_t *out_total_hits) {
+        struct InArgs {
+            u64 pid;
+            u32 value;
+        } __attribute__((packed));
+        struct OutArgs { u64 total_hits; } __attribute__((packed));
+
+        InArgs  in{ pid, value };
+        OutArgs out{ 0 };
+
+        Result rc = serviceDispatchInOut(
+            &g_srv, static_cast<u32>(seng::Cmd::StartMemoryScan), in, out);
+        if (R_SUCCEEDED(rc) && out_total_hits) {
+            *out_total_hits = out.total_hits;
+        } else if (out_total_hits) {
+            *out_total_hits = 0;
+        }
+        return rc;
+    }
+
+    // ---------------------------------------------------------------------
     // WriteMemory: usa Type-A (cliente envia, server le).
     // ---------------------------------------------------------------------
     Result writeMemory(uint64_t addr, const void *src, size_t size, size_t *out_written) {

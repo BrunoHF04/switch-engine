@@ -15,6 +15,9 @@ namespace ProcessUtils {
 
         rc = SengClient::getForegroundPid(out_pid);
         if (R_FAILED(rc)) return rc;
+        if (*out_pid <= 1) {
+            return MAKERESULT(Module_Libnx, LibnxError_NotFound);
+        }
 
         return SengClient::getTitleId(*out_pid, out_title_id);
     }

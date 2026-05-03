@@ -1,6 +1,10 @@
 #include "Debugger.hpp"
 #include "SysmodLog.hpp"
 
+#include <switch/runtime/hosversion.h>
+#include <switch/services/pgl.h>
+
+#include <algorithm>
 #include <mutex>
 #include <cstring>
 
@@ -13,9 +17,22 @@ namespace Debugger {
 
         /** pm:shell opcional — fallback quando pmdmnt devolve PID invalido. */
         bool g_pmshell_ready = false;
+
+        /** pgl: PID do "application" real (HOS 10+); melhor com overlay em primeiro plano. */
+        bool g_pgl_ready = false;
     }
 
     void init() {
+        if (hosversionAtLeast(10, 0, 0)) {
+            Result prg = pglInitialize();
+            if (R_SUCCEEDED(prg)) {
+                g_pgl_ready = true;
+                seng::mod::log::writeRaw("[dbg] pglInitialize OK");
+            } else {
+                seng::mod::log::write("[dbg] pglInitialize FAILED rc=0x%08X", prg);
+            }
+        }
+
         Result prc = pmshellInitialize();
         if (R_SUCCEEDED(prc)) {
             g_pmshell_ready = true;
@@ -30,6 +47,10 @@ namespace Debugger {
     }
 
     void releaseAuxServicesForExit() {
+        if (g_pgl_ready) {
+            pglExit();
+            g_pgl_ready = false;
+        }
         if (g_pmshell_ready) {
             pmshellExit();
             g_pmshell_ready = false;
@@ -68,6 +89,21 @@ namespace Debugger {
     Result getForegroundPid(uint64_t *out_pid) {
         if (!out_pid) {
             return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        }
+
+        // Com Tesla/Ultrahand aberto, pm:dmnt costuma reportar o applet/menu em
+        // primeiro plano, nao o jogo. pglGetApplicationProcessId (10.0.0+)
+        // aponta para o processo da aplicacao em execucao por baixo do overlay.
+        if (g_pgl_ready) {
+            u64 pglPid = 0;
+            Result rpg = pglGetApplicationProcessId(&pglPid);
+            seng::mod::log::write(
+                "[dbg] getForegroundPid pgl rc=0x%08X pidLo=%u",
+                rpg, static_cast<u32>(pglPid & 0xFFFFFFFFu));
+            if (R_SUCCEEDED(rpg) && pglPid > 1) {
+                *out_pid = pglPid;
+                return 0;
+            }
         }
 
         seng::mod::log::writeRaw("[dbg] getForegroundPid: pmdmntGetApplicationProcessId");
@@ -169,12 +205,19 @@ namespace Debugger {
         seng::mod::log::write("[dbg] listProcesses: svcGetProcessList cap=%d",
                               cap);
         Result rc = svcGetProcessList(&num_out, pids, static_cast<u32>(cap));
-        seng::mod::log::write("[dbg] listProcesses: svcGetProcessList rc=0x%08X num=%d",
-                              rc, num_out);
+        seng::mod::log::write(
+            "[dbg] listProcesses: svcGetProcessList rc=0x%08X num_total=%d cap=%d",
+            rc, num_out, cap);
         if (R_FAILED(rc)) return rc;
 
+        // NumProcesses (num_out) e' o TOTAL de processos vivos no sistema, nao
+        // o tamanho preenchido no buffer. Se num_out > cap, so' as primeiras
+        // `cap` entradas de `pids` sao validas — iterar ate num_out lixo fora
+        // do buffer (PID 0 fantasma, lista vazia, etc.). Ver switchbrew SVC.
+        const s32 filled = std::min(num_out, cap);
+
         size_t k = 0;
-        for (s32 i = 0; i < num_out && k < max; ++i) {
+        for (s32 i = 0; i < filled && k < max; ++i) {
             if (pids[i] == 0) {
                 continue;
             }

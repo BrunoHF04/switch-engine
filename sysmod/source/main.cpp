@@ -9,6 +9,10 @@
  * Fluxo:
  *   __libnx_initheap -> __appInit (sm/pm/fs + sdmc mount) -> main -> server loop
  *
+ * Nao usamos applet* nem time* aqui: sysmodules nao rodam em contexto de applet
+ * (ver templates/sysmodule do switch-examples); appletInitialize falha em
+ * varias versoes recentes do HOS e derruba o processo antes do primeiro log.
+ *
  * Logging:
  *   sdmc:/switch-engine_mod.log         eventos (init, IPCs, sessoes)
  *   sdmc:/switch-engine_mod_crash.log   dump de exception (override do
@@ -25,9 +29,7 @@
 
 #include <switch.h>
 #include <switch/runtime/hosversion.h>
-#include <switch/services/applet.h>
 #include <switch/services/set.h>
-#include <switch/services/time.h>
 
 #include <cstring>
 
@@ -67,8 +69,7 @@ void __appInit(void) {
     rc = smInitialize();
     if (R_FAILED(rc)) diagAbortWithResult(rc);
 
-    // Versao do HOS (pmdmnt/pminfo dependem do contexto inicializado como no
-    // libnx padrao — ver switchbrew/libnx#257.)
+    // Versao do HOS (necessaria para varios servicos pm/fs).
     if (hosversionGet() == 0) {
         rc = setsysInitialize();
         if (R_SUCCEEDED(rc)) {
@@ -80,12 +81,6 @@ void __appInit(void) {
             setsysExit();
         }
     }
-
-    rc = appletInitialize();
-    if (R_FAILED(rc)) diagAbortWithResult(rc);
-
-    rc = timeInitialize();
-    if (R_FAILED(rc)) diagAbortWithResult(rc);
 
     rc = pmdmntInitialize();
     if (R_FAILED(rc)) diagAbortWithResult(rc);
@@ -102,7 +97,7 @@ void __appInit(void) {
     fsdevMountSdmc();
 
     seng::mod::log::init();
-    seng::mod::log::writeRaw("[init] sm/setsys+hos/applet/time/pm/fs/sdmc OK");
+    seng::mod::log::writeRaw("[init] sm/setsys+hos/pm/fs/sdmc OK");
 }
 
 void __appExit(void) {
@@ -110,8 +105,6 @@ void __appExit(void) {
     seng::mod::log::close();
     fsdevUnmountAll();
     fsExit();
-    timeExit();
-    appletExit();
     Debugger::releaseAuxServicesForExit();
     pminfoExit();
     pmdmntExit();

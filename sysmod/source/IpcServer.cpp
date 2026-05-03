@@ -1,7 +1,10 @@
 #include "IpcServer.hpp"
 #include "Debugger.hpp"
+#include "ScanRunner.hpp"
 #include "SysmodLog.hpp"
 #include "seng_ipc.hpp"
+
+#include <switch/sf/cmif.h>
 
 #include <cstring>
 
@@ -113,11 +116,14 @@ Result IpcServer::handleSession(int idx) {
     void *tls = armGetTls();
     HipcParsedRequest req = hipcParseRequest(tls);
 
-    CmifInHdr *in_hdr = alignTo16<CmifInHdr>(req.data.data_words);
-    if (!in_hdr) {
-        seng::mod::log::write("[ipc] handleSession idx=%d: in_hdr=NULL", idx);
+    if (!req.data.data_words) {
+        seng::mod::log::write("[ipc] handleSession idx=%d: data_words=NULL", idx);
         return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
     }
+
+    // Mesmo alinhamento que o libnx usa ao montar o pedido CMIF (ver cmif.h).
+    void       *data_start = cmifGetAlignedDataStart(req.data.data_words, tls);
+    CmifInHdr  *in_hdr     = reinterpret_cast<CmifInHdr *>(data_start);
     if (in_hdr->magic != kSfciMagic) {
         // Pode ser o "Control" command (CloseSession etc.). Logamos e
         // respondemos BadInput; o cliente vai receber o reply e seguir.
@@ -125,7 +131,8 @@ Result IpcServer::handleSession(int idx) {
                               idx, in_hdr->magic);
         return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
     }
-    void *in_payload = static_cast<void *>(in_hdr + 1);
+    void *in_payload =
+        reinterpret_cast<u8 *>(data_start) + sizeof(CmifInHdr);
 
     seng::mod::log::write("[ipc] cmd=%u idx=%d (sessions=%d)",
                           in_hdr->cmd_id, idx, m_num_sessions);
@@ -208,6 +215,7 @@ Result IpcServer::handleSession(int idx) {
             return writeResponse(rc, &size, sizeof(size));
         }
 
+        case seng::Cmd::ListProcessesLegacy:
         case seng::Cmd::ListProcesses: {
             seng::mod::log::writeRaw("[ipc] -> ListProcesses begin");
 
@@ -242,6 +250,24 @@ Result IpcServer::handleSession(int idx) {
 
             u64 count_out = actual;
             return writeResponse(rc, &count_out, sizeof(count_out));
+        }
+
+        case seng::Cmd::StartMemoryScan: {
+            seng::mod::log::writeRaw("[ipc] -> StartMemoryScan begin");
+            struct InScan {
+                u64 pid;
+                u32 value;
+            } __attribute__((packed));
+            const InScan *ins = static_cast<const InScan *>(in_payload);
+            const u64     pid = ins->pid;
+            const u32     val = ins->value;
+            u64           total = 0;
+            const Result  rc    = seng::mod::runFirstScanU32(pid, val, &total);
+            seng::mod::log::write("[ipc] StartMemoryScan rc=0x%08X hitsLo=%u pidLo=%u",
+                                  rc,
+                                  static_cast<u32>(total & 0xFFFFFFFFu),
+                                  static_cast<u32>(pid & 0xFFFFFFFFu));
+            return writeResponse(rc, &total, sizeof(total));
         }
 
         case seng::Cmd::WriteMemory: {

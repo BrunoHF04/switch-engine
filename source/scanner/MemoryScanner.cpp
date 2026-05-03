@@ -89,29 +89,12 @@ Result MemoryScanner::readInChunks(Handle /*unused*/,
 Result MemoryScanner::firstScanU32(uint32_t value) {
     if (m_targetPid == 0) return MAKERESULT(Module_Libnx, LibnxError_BadInput);
 
-    Result rc = ProcessUtils::attachDebug(m_targetPid, nullptr);
+    Result rc = SengClient::initialize();
     if (R_FAILED(rc)) return rc;
 
-    ResultsStore::beginWrite();
-
-    rc = iterateRwRegions(0, [&](const MemoryInfo &info) {
-        return readInChunks(0, info.addr, info.size,
-            [&](uint64_t base, const uint8_t *buf, size_t bufSize) {
-                if (bufSize < 4) return 0;
-                const size_t end = bufSize - 3;
-                for (size_t i = 0; i < end; i += 4) {
-                    uint32_t cur;
-                    std::memcpy(&cur, buf + i, sizeof(cur));
-                    if (cur == value) {
-                        ResultsStore::pushHit(base + i, cur);
-                    }
-                }
-                return 0;
-            });
-    });
-
-    ResultsStore::endWrite();
-    ProcessUtils::detachDebug(0);
+    u64 hits = 0;
+    rc = SengClient::startMemoryScan(m_targetPid, value, &hits);
+    (void)hits;
     return rc;
 }
 

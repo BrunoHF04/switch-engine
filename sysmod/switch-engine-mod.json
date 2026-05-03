@@ -19,6 +19,7 @@
 
     "service_access": [
         "fsp-srv",
+        "pgl",
         "pm:dmnt",
         "pm:info",
         "pm:shell",
