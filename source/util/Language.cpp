@@ -25,7 +25,7 @@ namespace seng::i18n {
             /* SettingsHeader      */ { "Settings",              "Configuracoes"          },
 
             // ---- MainGui itens ----
-            /* DetectForeground    */ { "Detect foreground",     "Detectar em primeiro plano" },
+            /* DetectForeground    */ { "Auto: game (PGL/pm)",     "Auto: jogo (PGL/pm)" },
             /* PickProcess         */ { "Pick process...",       "Escolher processo..."   },
             /* NoTarget            */ { "(no target)",           "(sem alvo)"             },
             /* SetValue            */ { "Set value",             "Definir valor"          },

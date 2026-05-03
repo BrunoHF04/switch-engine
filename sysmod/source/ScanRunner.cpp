@@ -161,6 +161,9 @@ namespace seng::mod {
 
         u64 total = 0;
         rc = resultsEnd(&writer, &total);
+        // Sempre detach apos scan: manter svcDebugActiveProcess aberto
+        // congela o jogo por causa de debug events pendentes.
+        // O poke re-attach + detach rapidamente quando precisar escrever.
         Debugger::detach();
 
         if (R_SUCCEEDED(rc) && out_total_hits) *out_total_hits = total;

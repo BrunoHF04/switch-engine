@@ -4,42 +4,38 @@
 #include "SysmodLog.hpp"
 #include "seng_ipc.hpp"
 
+#include <cstring>
 #include <switch/sf/cmif.h>
 
-#include <cstring>
-
 // =========================================================================
-// CMIF protocol constants (em libnx: <switch/sf/cmif.h>)
+// CMIF / HIPC (libnx: <switch/sf/cmif.h>, <switch/sf/hipc.h>)
 // =========================================================================
 namespace {
-    constexpr u32 kSfciMagic = 0x49434653u; // 'SFCI' = request from client
-    constexpr u32 kSfcoMagic = 0x4F434653u; // 'SFCO' = response from server
 
-    struct CmifInHdr  { u32 magic; u32 version; u32 cmd_id; u32 token; };
-    struct CmifOutHdr { u32 magic; u32 version; Result result; u32 token; };
-
-    // CMIF header fica em offset 16-byte-alinhado dentro da data section.
-    template <typename T>
-    inline T *alignTo16(void *p) {
-        uintptr_t a = (reinterpret_cast<uintptr_t>(p) + 15u) & ~uintptr_t(15);
-        return reinterpret_cast<T *>(a);
-    }
-
-    // Constroi um HIPC reply com CmifOutHdr + payload no TLS.
+    // Copia do TLS para fora da stack: (1) fopen/log nao pode corromper o
+    // pedido; (2) array grande em handleSession pressiona stack; (3) copiar
+    // demasiados bytes a partir de armGetTls() pode ir alem da regiao TLS
+    // mapeada e dar data abort (visto em crash logo apos primeira sessao).
+    alignas(16) static u8 g_ipc_stash[0x400];
+    constexpr size_t kTlsCopyBytes = sizeof(g_ipc_stash);
+    // Constroi um HIPC reply com CmifOutHeader + payload no TLS real
+    // (ReplyAndReceive exige mensagem no TLS do thread).
     Result writeResponse(Result rc,
                          const void *payload,
                          size_t      payload_size) {
-        // Calcula data_words de forma a caber CmifOutHdr alinhado + payload + slack.
-        size_t bytes = sizeof(CmifOutHdr) + payload_size + 16; // +16 slack p/ alinhamento
+        size_t bytes = sizeof(CmifOutHeader) + payload_size + 16;
         size_t data_words = (bytes + 3) / 4;
 
         HipcMetadata meta = {};
-        meta.num_data_words = data_words;
+        meta.type             = CmifCommandType_Request;
+        meta.num_data_words   = static_cast<u32>(data_words);
 
-        HipcRequest req = hipcMakeRequestInline(armGetTls(), meta);
+        void       *base = armGetTls();
+        HipcRequest req  = hipcMakeRequestInline(base, meta);
 
-        CmifOutHdr *out = alignTo16<CmifOutHdr>(req.data_words);
-        out->magic   = kSfcoMagic;
+        CmifOutHeader *out = reinterpret_cast<CmifOutHeader *>(
+            cmifGetAlignedDataStart(req.data_words, base));
+        out->magic   = CMIF_OUT_HEADER_MAGIC;
         out->version = 0;
         out->result  = rc;
         out->token   = 0;
@@ -53,6 +49,45 @@ namespace {
     void *bufferAddress(const HipcBufferDescriptor *d, u64 *out_size) {
         if (out_size) *out_size = hipcGetBufferSize(d);
         return hipcGetBufferAddress(d);
+    }
+
+    /**
+     * Buffer OUT do cliente: libnx pode emitir mais de um recv_buffer (ex. um
+     * placeholder 0-byte antes do buffer real com MapAlias). Tambem pode
+     * estar em recv_list (OutPointer / auto).
+     */
+    bool resolveClientOutBuffer(const HipcParsedRequest &req,
+                                void                    **out_ptr,
+                                u64                      *out_size) {
+        *out_ptr  = nullptr;
+        *out_size = 0;
+        if (req.data.recv_buffers && req.meta.num_recv_buffers > 0) {
+            for (u32 i = 0; i < req.meta.num_recv_buffers; ++i) {
+                u64   sz = 0;
+                void *p  = bufferAddress(&req.data.recv_buffers[i], &sz);
+                if (p && sz > 0) {
+                    *out_ptr  = p;
+                    *out_size = sz;
+                    return true;
+                }
+            }
+        }
+        if (req.data.recv_list && req.meta.num_recv_statics != 0 &&
+            req.meta.num_recv_statics != HIPC_AUTO_RECV_STATIC) {
+            for (u32 i = 0; i < req.meta.num_recv_statics; ++i) {
+                const HipcRecvListEntry &e = req.data.recv_list[i];
+                const uintptr_t addr =
+                    static_cast<uintptr_t>(e.address_low) |
+                    ((static_cast<uintptr_t>(e.address_high) & 0xFFFFu) << 32);
+                const u32 sz = static_cast<u32>(e.size);
+                if (addr != 0 && sz > 0) {
+                    *out_ptr  = reinterpret_cast<void *>(addr);
+                    *out_size = sz;
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }
 
@@ -114,33 +149,60 @@ void IpcServer::closeSession(int idx) {
 // =========================================================================
 Result IpcServer::handleSession(int idx) {
     void *tls = armGetTls();
-    HipcParsedRequest req = hipcParseRequest(tls);
+
+    // Copia o frame HIPC recebido para buffer estatico ANTES de qualquer log.
+    // Ver comentario em g_ipc_stash (stack + tamanho da copia do TLS).
+    std::memcpy(g_ipc_stash, tls, kTlsCopyBytes);
+
+    void              *msg_base = g_ipc_stash;
+    HipcParsedRequest  req      = hipcParseRequest(msg_base);
 
     if (!req.data.data_words) {
         seng::mod::log::write("[ipc] handleSession idx=%d: data_words=NULL", idx);
         return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
     }
 
-    // Mesmo alinhamento que o libnx usa ao montar o pedido CMIF (ver cmif.h).
-    void       *data_start = cmifGetAlignedDataStart(req.data.data_words, tls);
-    CmifInHdr  *in_hdr     = reinterpret_cast<CmifInHdr *>(data_start);
-    if (in_hdr->magic != kSfciMagic) {
-        // Pode ser o "Control" command (CloseSession etc.). Logamos e
-        // respondemos BadInput; o cliente vai receber o reply e seguir.
-        seng::mod::log::write("[ipc] handleSession idx=%d: bad magic 0x%08X (esperado SFCI)",
-                              idx, in_hdr->magic);
+    // ---- CMIF Control vs Request ----
+    // libnx envia Control commands (hipc_type 5/7) na inicializacao da sessao
+    // (ex.: QueryPointerBufferSize, cmd_id=3). Se os passarmos ao switch de
+    // servico, cmd_id=3 casa com AttachProcess e corrompe g_debug. Devemos
+    // responder inline: pointer_buffer_size = 0 (nao usamos pointer buffers).
+    const u32 hipc_type = req.meta.type;
+    if (hipc_type == CmifCommandType_Control ||
+        hipc_type == CmifCommandType_ControlWithContext) {
+        CmifInHeader *ctrl = reinterpret_cast<CmifInHeader *>(
+            cmifGetAlignedDataStart(req.data.data_words, msg_base));
+        const u32 ctrl_cmd = (ctrl->magic == CMIF_IN_HEADER_MAGIC)
+                                 ? ctrl->command_id : 0xFFFFFFFFu;
+        seng::mod::log::write("[ipc] CONTROL cmd=%u idx=%d (respondendo 0)",
+                              ctrl_cmd, idx);
+        if (ctrl_cmd == 3) {
+            u16 pbsz = 0;
+            return writeResponse(0, &pbsz, sizeof(pbsz));
+        }
+        return writeResponse(0, nullptr, 0);
+    }
+
+    if (hipc_type == CmifCommandType_Close) {
+        seng::mod::log::write("[ipc] CLOSE idx=%d", idx);
+        return writeResponse(0, nullptr, 0);
+    }
+
+    CmifInHeader *in_hdr = reinterpret_cast<CmifInHeader *>(
+        cmifGetAlignedDataStart(req.data.data_words, msg_base));
+    if (in_hdr->magic != CMIF_IN_HEADER_MAGIC) {
+        seng::mod::log::write("[ipc] handleSession idx=%d: bad magic 0x%08X tipo=%u",
+                              idx, in_hdr->magic, hipc_type);
         return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
     }
-    void *in_payload =
-        reinterpret_cast<u8 *>(data_start) + sizeof(CmifInHdr);
+
+    void *in_payload = reinterpret_cast<u8 *>(in_hdr) + sizeof(CmifInHeader);
+    const u32 cmd_id = in_hdr->command_id;
 
     seng::mod::log::write("[ipc] cmd=%u idx=%d (sessions=%d)",
-                          in_hdr->cmd_id, idx, m_num_sessions);
+                          cmd_id, idx, m_num_sessions);
 
-    // Logs de diagnostico abaixo usam SOMENTE %u/%X (32-bit) para evitar
-    // qualquer dependencia de %llu/%zu no vsnprintf do newlib do Switch.
-    // Pids/tids sao splitados em high32+low32.
-    switch (static_cast<seng::Cmd>(in_hdr->cmd_id)) {
+    switch (static_cast<seng::Cmd>(cmd_id)) {
 
         case seng::Cmd::GetVersion: {
             seng::mod::log::writeRaw("[ipc] -> GetVersion");
@@ -203,11 +265,11 @@ Result IpcServer::handleSession(int idx) {
             u64 *args = static_cast<u64 *>(in_payload);
             u64  addr = args[0];
             u64  size = args[1];
-            if (req.meta.num_recv_buffers < 1) {
+            void *dst   = nullptr;
+            u64   bsize = 0;
+            if (!resolveClientOutBuffer(req, &dst, &bsize)) {
                 return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), nullptr, 0);
             }
-            u64   bsize = 0;
-            void *dst   = bufferAddress(&req.data.recv_buffers[0], &bsize);
             if (size > bsize)                 size = bsize;
             if (size > seng::kMaxChunkBytes)  size = seng::kMaxChunkBytes;
 
@@ -220,18 +282,21 @@ Result IpcServer::handleSession(int idx) {
             seng::mod::log::writeRaw("[ipc] -> ListProcesses begin");
 
             u64 max_entries = *static_cast<u64 *>(in_payload);
-            if (req.meta.num_recv_buffers < 1) {
-                seng::mod::log::writeRaw("[ipc] ListProcesses: NO RECV BUFFER");
+            void *dst   = nullptr;
+            u64   bsize = 0;
+            if (!resolveClientOutBuffer(req, &dst, &bsize)) {
+                seng::mod::log::writeRaw("[ipc] ListProcesses: NO OUT BUFFER");
                 return writeResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput),
                                      nullptr, 0);
             }
-            u64   bsize = 0;
-            void *dst   = bufferAddress(&req.data.recv_buffers[0], &bsize);
 
-            seng::mod::log::write("[ipc] ListProcesses maxLo=%u bsizeLo=%u dstNull=%u",
-                                  static_cast<u32>(max_entries & 0xFFFFFFFFu),
-                                  static_cast<u32>(bsize & 0xFFFFFFFFu),
-                                  dst == nullptr ? 1u : 0u);
+            seng::mod::log::write(
+                "[ipc] ListProcesses maxLo=%u bsizeLo=%u nb_recv=%u nb_static=%u dstNull=%u",
+                static_cast<u32>(max_entries & 0xFFFFFFFFu),
+                static_cast<u32>(bsize & 0xFFFFFFFFu),
+                req.meta.num_recv_buffers,
+                req.meta.num_recv_statics,
+                dst == nullptr ? 1u : 0u);
 
             // Cap pelo tamanho do buffer fornecido E pelo max do cliente E
             // pelo nosso hard cap interno.
@@ -288,6 +353,7 @@ Result IpcServer::handleSession(int idx) {
         }
 
         default:
+            seng::mod::log::write("[ipc] comando nao implementado cmd=%u", cmd_id);
             return writeResponse(MAKERESULT(Module_Libnx, LibnxError_NotFound), nullptr, 0);
     }
 }

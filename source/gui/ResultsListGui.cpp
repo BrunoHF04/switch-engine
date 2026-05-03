@@ -4,6 +4,7 @@
 #include "../scanner/ResultsStore.hpp"
 #include "../scanner/SengClient.hpp"
 #include "../util/Language.hpp"
+#include "../util/Logger.hpp"
 
 #include <cinttypes>
 #include <cstdio>
@@ -92,14 +93,33 @@ void ResultsListGui::rebuild() {
                     static_cast<uint64_t>(0),
                     static_cast<uint64_t>(UINT32_MAX),
                     [addr, pidCaptured](uint64_t v) {
-                        // Garante attach (no-op se ja' attached na mesma pid).
-                        if (pidCaptured != 0) {
-                            (void)SengClient::attach(pidCaptured);
+                        if (pidCaptured == 0) return;
+
+                        // Ciclo rapido: attach -> write -> detach.
+                        // Manter svcDebugActiveProcess aberto congela o jogo.
+                        const Result ar = SengClient::attach(pidCaptured);
+                        if (R_FAILED(ar)) {
+                            seng::log::write(
+                                "[poke] attach falhou pid=%llu rc=0x%08X",
+                                static_cast<unsigned long long>(pidCaptured),
+                                ar);
+                            return;
                         }
+
                         const uint32_t value = static_cast<uint32_t>(v);
-                        size_t wrote = 0;
-                        (void)SengClient::writeMemory(addr, &value,
-                                                      sizeof(value), &wrote);
+                        size_t         wrote = 0;
+                        const Result   wr =
+                            SengClient::writeMemory(addr, &value, sizeof(value),
+                                                    &wrote);
+                        // Detach IMEDIATAMENTE para nao congelar o jogo.
+                        SengClient::detach();
+
+                        if (R_FAILED(wr) || wrote != sizeof(value)) {
+                            seng::log::write(
+                                "[poke] write addr=0x%010" PRIx64
+                                " rc=0x%08X wrote=%zu",
+                                addr, wr, wrote);
+                        }
                     });
                 return true;
             });

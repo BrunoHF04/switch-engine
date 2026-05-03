@@ -62,7 +62,14 @@ tsl::elm::Element *ProcessListGui::createUI() {
         return frame;
     }
 
-    if (count == 0) {
+    size_t usable = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (entries[i].pid != 0) {
+            ++usable;
+        }
+    }
+
+    if (usable == 0) {
         list->addItem(new tsl::elm::CategoryHeader(
             i18n::tr(i18n::S::ProcessListTitle)));
         list->addItem(new tsl::elm::ListItem(
@@ -73,23 +80,26 @@ tsl::elm::Element *ProcessListGui::createUI() {
 
     char hdrBuf[48];
     std::snprintf(hdrBuf, sizeof(hdrBuf),
-                  i18n::tr(i18n::S::ProcessListCountFmt), count);
+                  i18n::tr(i18n::S::ProcessListCountFmt), usable);
     list->addItem(new tsl::elm::CategoryHeader(hdrBuf));
 
     for (size_t i = 0; i < count; ++i) {
         const seng::ProcessEntry &e = entries[i];
+        if (e.pid == 0) {
+            continue;
+        }
 
-        char title[48];
-        char sub[48];
-        std::snprintf(title, sizeof(title),
-                      "%s  PID %" PRIu64,
-                      classifyTid(e.tid),
-                      e.pid);
+        // Coluna esquerda (tesla trunca por largura): so PID — o tipo e TID
+        // completos ficam na sublinha.
+        char title[32];
+        char sub[96];
+        std::snprintf(title, sizeof(title), "PID %" PRIu64, e.pid);
         if (e.tid != 0) {
-            std::snprintf(sub, sizeof(sub),
-                          "TID 0x%016" PRIx64, e.tid);
+            std::snprintf(sub, sizeof(sub), "%s  0x%016" PRIx64,
+                          classifyTid(e.tid), e.tid);
         } else {
-            std::snprintf(sub, sizeof(sub), "-");
+            std::snprintf(sub, sizeof(sub), "%s  (sem TID)",
+                          classifyTid(e.tid));
         }
 
         auto *it = new tsl::elm::ListItem(title, sub);
