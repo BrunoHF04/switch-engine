@@ -7,7 +7,8 @@
 
 Esse desenho em duas partes e necessario porque overlays Tesla nao possuem permissao para executar chamadas de debug diretamente no processo alvo.
 
-## O que o programa faz
+<details>
+<summary><h2>O que o programa faz</h2></summary>
 
 O Switch Engine permite:
 
@@ -17,7 +18,10 @@ O Switch Engine permite:
 - Navegar resultados paginados e aplicar **poke** (escrita de memoria) em enderecos encontrados — o valor muda em tempo real no jogo.
 - Persistir resultados e configuracoes no SD para manter estado entre aberturas.
 
-## Arquitetura
+</details>
+
+<details>
+<summary><h2>Arquitetura</h2></summary>
 
 ```
 +---------------------------+         +---------------------------+
@@ -54,7 +58,10 @@ Para evitar congelar o jogo, o sysmod segue o padrao **attach → opera → deta
 - `sysmod/source/`: servidor IPC (`IpcServer`), camada de debug (`Debugger`), scan no sysmod (`ScanRunner`) e logs.
 - `include/seng_ipc.hpp`: contrato IPC compartilhado entre overlay e sysmod.
 
-## Tecnologias
+</details>
+
+<details>
+<summary><h2>Tecnologias</h2></summary>
 
 - Linguagem principal: **C++20**.
 - SDK/Ferramentas: **devkitPro** com `switch-dev` (libnx 4.x).
@@ -62,7 +69,10 @@ Para evitar congelar o jogo, o sysmod segue o padrao **attach → opera → deta
 - Ambiente alvo: Nintendo Switch com **Atmosphere CFW**.
 - Script de deploy: **PowerShell** (`scripts/install-to-sd.ps1`).
 
-## Requisitos
+</details>
+
+<details>
+<summary><h2>Requisitos</h2></summary>
 
 Antes de compilar, garanta:
 
@@ -71,7 +81,10 @@ Antes de compilar, garanta:
 - Ferramentas `npdmtool`, `elf2nro` e `build_pfs0` disponiveis.
 - Submodulo `lib/libtesla` presente no projeto (`git submodule update --init`).
 
-## Build
+</details>
+
+<details>
+<summary><h2>Build</h2></summary>
 
 ```bash
 # Compilar tudo (overlay + sysmod)
@@ -87,7 +100,10 @@ Artefatos principais:
 - `sysmod/exefs.nsp` — sysmodule (backend)
 - `switch-engine.ovl` — overlay Tesla (frontend)
 
-## Instalacao no Nintendo Switch
+</details>
+
+<details>
+<summary><h2>Instalacao no Nintendo Switch</h2></summary>
 
 ### Metodo recomendado (Windows / PowerShell)
 
@@ -119,7 +135,10 @@ Importante:
 - Apos instalar/atualizar o **sysmod**, faca **reboot completo** do console (nao apenas sleep/wake).
 - A atualizacao do **overlay** nao requer reboot — basta fechar e reabrir o Tesla Menu.
 
-## Como usar
+</details>
+
+<details>
+<summary><h2>Como usar</h2></summary>
 
 1. Abra um jogo no Switch.
 2. Abra o Tesla Menu (atalho padrao: `L + D-Pad Down + RS`).
@@ -132,7 +151,10 @@ Importante:
 7. Altere o valor no jogo e rode **Proxima Busca** para filtrar.
 8. Abra **Ver Resultados** e clique num endereco para alterar o valor (poke).
 
-## Idioma
+</details>
+
+<details>
+<summary><h2>Idioma</h2></summary>
 
 Suporte a:
 
@@ -141,7 +163,10 @@ Suporte a:
 
 A selecao e salva em `sdmc:/switch/switch-engine/config.ini`. As strings ficam em `source/util/Language.cpp`.
 
-## Logs e diagnostico
+</details>
+
+<details>
+<summary><h2>Logs e diagnostico</h2></summary>
 
 | Arquivo | Descricao |
 |---------|-----------|
@@ -158,7 +183,10 @@ Se algo nao funcionar:
 3. Leia `sdmc:/switch-engine_mod.log` — ele mostra cada comando IPC recebido e o resultado.
 4. Reinicie o console por power-cycle (nao apenas sleep/wake).
 
-## Contrato IPC (`seng` v2)
+</details>
+
+<details>
+<summary><h2>Contrato IPC (<code>seng</code> v2)</h2></summary>
 
 | Cmd | Nome | Entrada | Saida |
 |-----|------|---------|-------|
@@ -181,7 +209,10 @@ Limitacoes:
 - Lista de processos: ate **64** entradas por chamada.
 - Scan atual: somente **uint32** com comparador de igualdade.
 
-## Roadmap
+</details>
+
+<details>
+<summary><h2>Roadmap</h2></summary>
 
 - [ ] Comparadores adicionais (`>=`, `<=`, `between`, `changed`, `unchanged`).
 - [ ] Suporte a tipos numericos adicionais (u8, u16, u64, f32, f64).
@@ -190,7 +221,12 @@ Limitacoes:
 - [ ] Nomes dos processos na lista (via NACP quando disponivel).
 - [ ] Exportacao/importacao de cheat codes.
 
-## Creditos
+</details>
+
+<details>
+<summary><h2>Creditos</h2></summary>
 
 Desenvolvido por **Bruno Fernandes**.
 Portfolio: [bruno-fernandes.online](https://bruno-fernandes.online)
+
+</details>
