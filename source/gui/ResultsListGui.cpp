@@ -5,14 +5,17 @@
 #include "../scanner/SengClient.hpp"
 #include "../util/Language.hpp"
 #include "../util/Logger.hpp"
+#include "seng_ipc.hpp"
 
 #include <cinttypes>
 #include <cstdio>
+#include <sys/stat.h>
 
 namespace i18n = seng::i18n;
 
-ResultsListGui::ResultsListGui(uint64_t targetPid, size_t initialPage)
-    : m_targetPid(targetPid), m_currentPage(initialPage) {}
+ResultsListGui::ResultsListGui(uint64_t targetPid, uint64_t titleId,
+                                size_t initialPage)
+    : m_targetPid(targetPid), m_titleId(titleId), m_currentPage(initialPage) {}
 
 tsl::elm::Element *ResultsListGui::createUI() {
     auto *frame = new tsl::elm::OverlayFrame("Switch Engine",
@@ -24,11 +27,8 @@ tsl::elm::Element *ResultsListGui::createUI() {
 }
 
 void ResultsListGui::update() {
-    // Se o numero total mudou (ex: o usuario voltou a fazer scan ainda nesse
-    // overlay), rebuilda automaticamente.
     const size_t cur = ResultsStore::count();
     if (cur != m_lastBuiltCount) {
-        // Re-clamp pagina se diminuiu.
         const size_t totalPages = (cur + kPageSize - 1) / kPageSize;
         if (m_currentPage >= totalPages && totalPages > 0)
             m_currentPage = totalPages - 1;
@@ -41,9 +41,6 @@ void ResultsListGui::update() {
         m_pendingFocus = true;
     }
 
-    // Quando o List acaba de aplicar clear()+itemsToAdd no proximo draw,
-    // requestFocus() falha (returns nullptr). Tentamos novamente todo frame
-    // ate' ser aceito, sem causar mais shake (passamos shake=false).
     if (m_pendingFocus && this->getFocusedElement() == nullptr) {
         this->requestFocus(m_list, tsl::FocusDirection::None, false);
         if (this->getFocusedElement() != nullptr) {
@@ -72,54 +69,34 @@ void ResultsListGui::rebuild() {
     }
 
     // -------------------------------------------------------------------
-    // Hits da pagina atual.
+    // Hits da pagina atual
     // -------------------------------------------------------------------
+    const seng::ValueType vtype = ResultsStore::currentValueType();
+    const size_t valSize = seng::valueTypeSize(vtype);
     const uint64_t pidCaptured = m_targetPid;
+    const uint64_t tidCaptured = m_titleId;
+
     ResultsStore::readPage(m_currentPage, kPageSize,
-        [this, pidCaptured](const ResultsStore::Entry &e) {
+        [this, pidCaptured, tidCaptured, vtype, valSize](const ResultsStore::Entry &e) {
             char addrBuf[24];
-            char valBuf[16];
+            char valBuf[24];
             std::snprintf(addrBuf, sizeof(addrBuf), "0x%010" PRIx64, e.address);
-            std::snprintf(valBuf,  sizeof(valBuf),  "%" PRIu32,      e.value);
+            std::snprintf(valBuf,  sizeof(valBuf),  "%" PRIu64, e.raw_value);
 
             auto *it = new tsl::elm::ListItem(addrBuf, valBuf);
-            const uint64_t addr = e.address;
+            const uint64_t addr   = e.address;
+            const uint64_t oldVal = e.raw_value;
 
-            it->setClickListener([addr, pidCaptured](u64 keys) {
+            it->setClickListener(
+                [this, addr, pidCaptured, vtype, valSize, oldVal](u64 keys) {
                 if (!(keys & HidNpadButton_A)) return false;
 
                 tsl::changeTo<NumericInputGui>(
                     std::string(i18n::tr(i18n::S::PokeValueTitle)),
                     static_cast<uint64_t>(0),
-                    static_cast<uint64_t>(UINT32_MAX),
-                    [addr, pidCaptured](uint64_t v) {
-                        if (pidCaptured == 0) return;
-
-                        // Ciclo rapido: attach -> write -> detach.
-                        // Manter svcDebugActiveProcess aberto congela o jogo.
-                        const Result ar = SengClient::attach(pidCaptured);
-                        if (R_FAILED(ar)) {
-                            seng::log::write(
-                                "[poke] attach falhou pid=%llu rc=0x%08X",
-                                static_cast<unsigned long long>(pidCaptured),
-                                ar);
-                            return;
-                        }
-
-                        const uint32_t value = static_cast<uint32_t>(v);
-                        size_t         wrote = 0;
-                        const Result   wr =
-                            SengClient::writeMemory(addr, &value, sizeof(value),
-                                                    &wrote);
-                        // Detach IMEDIATAMENTE para nao congelar o jogo.
-                        SengClient::detach();
-
-                        if (R_FAILED(wr) || wrote != sizeof(value)) {
-                            seng::log::write(
-                                "[poke] write addr=0x%010" PRIx64
-                                " rc=0x%08X wrote=%zu",
-                                addr, wr, wrote);
-                        }
+                    static_cast<uint64_t>(UINT64_MAX),
+                    [this, addr, pidCaptured, vtype, valSize](uint64_t v) {
+                        doPoke(addr, v);
                     });
                 return true;
             });
@@ -127,7 +104,40 @@ void ResultsListGui::rebuild() {
         });
 
     // -------------------------------------------------------------------
-    // Navegacao entre paginas (rebuild in-place).
+    // Acoes extras: undo, freeze, export
+    // -------------------------------------------------------------------
+    m_list->addItem(new tsl::elm::CategoryHeader(
+        i18n::tr(i18n::S::ActionHeader)));
+
+    // Undo
+    auto *undoItem = new tsl::elm::ListItem(i18n::tr(i18n::S::UndoPoke));
+    undoItem->setClickListener([this](u64 keys) {
+        if (!(keys & HidNpadButton_A)) return false;
+        doUndo();
+        return true;
+    });
+    m_list->addItem(undoItem);
+
+    // Freeze clear
+    auto *freezeClearItem = new tsl::elm::ListItem(i18n::tr(i18n::S::FreezeClear));
+    freezeClearItem->setClickListener([](u64 keys) {
+        if (!(keys & HidNpadButton_A)) return false;
+        SengClient::clearFreezes();
+        return true;
+    });
+    m_list->addItem(freezeClearItem);
+
+    // Export cheats
+    auto *exportItem = new tsl::elm::ListItem(i18n::tr(i18n::S::ExportCheats));
+    exportItem->setClickListener([this](u64 keys) {
+        if (!(keys & HidNpadButton_A)) return false;
+        doExportCheats();
+        return true;
+    });
+    m_list->addItem(exportItem);
+
+    // -------------------------------------------------------------------
+    // Navegacao entre paginas
     // -------------------------------------------------------------------
     if (totalPages > 1) {
         m_list->addItem(new tsl::elm::CategoryHeader(
@@ -165,4 +175,125 @@ void ResultsListGui::rebuild() {
             m_list->addItem(next);
         }
     }
+}
+
+void ResultsListGui::doPoke(uint64_t addr, uint64_t value) {
+    if (m_targetPid == 0) return;
+
+    const seng::ValueType vtype = ResultsStore::currentValueType();
+    const size_t valSize = seng::valueTypeSize(vtype);
+
+    const Result ar = SengClient::attach(m_targetPid);
+    if (R_FAILED(ar)) {
+        seng::log::write("ERR  [poke] attach failed pid=%llu rc=0x%08X",
+                         static_cast<unsigned long long>(m_targetPid), ar);
+        return;
+    }
+
+    // Undo: ler valor atual antes de escrever.
+    uint64_t oldVal = 0;
+    size_t   readGot = 0;
+    SengClient::readMemory(addr, &oldVal, valSize, &readGot);
+    if (readGot == valSize) {
+        if (m_undoStack.size() >= kUndoStackSize) {
+            m_undoStack.erase(m_undoStack.begin());
+        }
+        m_undoStack.push_back(UndoEntry{ addr, oldVal, valSize });
+    }
+
+    size_t wrote = 0;
+    const Result wr = SengClient::writeMemory(addr, &value, valSize, &wrote);
+    SengClient::detach();
+
+    if (R_FAILED(wr) || wrote != valSize) {
+        seng::log::write("ERR  [poke] write addr=0x%010" PRIx64
+                         " rc=0x%08X wrote=%zu",
+                         addr, wr, wrote);
+    }
+}
+
+void ResultsListGui::doUndo() {
+    if (m_undoStack.empty()) return;
+
+    auto last = m_undoStack.back();
+    m_undoStack.pop_back();
+
+    const Result ar = SengClient::attach(m_targetPid);
+    if (R_FAILED(ar)) return;
+
+    size_t wrote = 0;
+    SengClient::writeMemory(last.addr, &last.oldValue, last.valueSize, &wrote);
+    SengClient::detach();
+
+    seng::log::write("INFO [undo] addr=0x%010" PRIx64 " restored",
+                     last.addr);
+}
+
+void ResultsListGui::doFreeze(uint64_t addr, uint64_t value) {
+    const seng::ValueType vtype = ResultsStore::currentValueType();
+    uint8_t slot = 0xFF;
+    Result rc = SengClient::addFreeze(addr, vtype, value, &slot);
+    if (R_FAILED(rc)) {
+        seng::log::write("ERR  [freeze] addFreeze failed rc=0x%08X", rc);
+    }
+}
+
+void ResultsListGui::doExportCheats() {
+    if (m_titleId == 0 || m_total == 0) return;
+
+    char dirPath[128];
+    std::snprintf(dirPath, sizeof(dirPath),
+                  "sdmc:/atmosphere/contents/%016" PRIx64 "/cheats",
+                  m_titleId);
+    mkdir("sdmc:/atmosphere", 0777);
+    mkdir("sdmc:/atmosphere/contents", 0777);
+
+    char tidDir[96];
+    std::snprintf(tidDir, sizeof(tidDir),
+                  "sdmc:/atmosphere/contents/%016" PRIx64,
+                  m_titleId);
+    mkdir(tidDir, 0777);
+    mkdir(dirPath, 0777);
+
+    char filePath[160];
+    std::snprintf(filePath, sizeof(filePath), "%s/switch-engine.txt", dirPath);
+
+    FILE *fp = std::fopen(filePath, "w");
+    if (!fp) {
+        seng::log::write("ERR  [export] fopen failed: %s", filePath);
+        return;
+    }
+
+    std::fprintf(fp, "[Switch Engine Export]\n");
+
+    const seng::ValueType vtype = ResultsStore::currentValueType();
+    const size_t valSize = seng::valueTypeSize(vtype);
+    size_t exported = 0;
+
+    // Exporta todas as paginas.
+    const size_t totalPages = (m_total + kPageSize - 1) / kPageSize;
+    for (size_t page = 0; page < totalPages; ++page) {
+        ResultsStore::readPage(page, kPageSize,
+            [&](const ResultsStore::Entry &e) {
+                // Formato Atmosphere cheat: write static
+                // 0VVVVVVV AAAAAAAA AAAAAAAA VVVVVVVV
+                // Tipo 0 = store estático com width encoding.
+                uint32_t widthBits = 0;
+                switch (valSize) {
+                    case 1: widthBits = 1; break;
+                    case 2: widthBits = 2; break;
+                    case 4: widthBits = 4; break;
+                    case 8: widthBits = 8; break;
+                }
+                std::fprintf(fp, "04000000 %08" PRIX64 " %08" PRIX64 "\n",
+                             e.address,
+                             e.raw_value);
+                ++exported;
+            });
+    }
+
+    std::fflush(fp);
+    std::fclose(fp);
+
+    seng::log::write("INFO [export] %zu cheats -> %s", exported, filePath);
 }

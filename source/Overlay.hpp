@@ -1,18 +1,5 @@
 #pragma once
 
-/**
- * SwitchEngineOverlay
- *
- * Classe raiz do overlay. Responsavel por:
- *  - Inicializar/desinicializar servicos do sistema (sm, pm:dmnt, fs, hid).
- *  - Garantir que a pasta sdmc:/switch/switch-engine exista.
- *  - Carregar a GUI inicial (MainGui).
- *
- * Nao inicializamos servicos pesados aqui (ldr:dmnt, debug handles): isso fica
- * sob demanda dentro do MemoryScanner para nao manter o jogo "attachado" sem
- * necessidade.
- */
-
 #include <tesla.hpp>
 #include <memory>
 
@@ -30,6 +17,7 @@ public:
     std::unique_ptr<tsl::Gui> loadInitialGui() override;
 
 private:
-    /** true se `SengClient::initializeTimed` conseguiu sessao com o sysmod. */
-    bool m_sengReady = false;
+    bool     m_sengReady        = false;
+    bool     m_versionMismatch  = false;
+    uint32_t m_sysmodVersion    = 0;
 };

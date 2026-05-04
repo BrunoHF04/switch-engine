@@ -4,51 +4,40 @@
 #include <cstddef>
 #include <functional>
 
+#include "seng_ipc.hpp"
+#include "../../include/results_bin_format.hpp"
+
 /**
  * ResultsStore
  *
- * Persistencia paginada de hits no SD card. Por que arquivo, e nao std::vector?
- *   - Heap do overlay e' minusculo (~6MB).
- *   - Um First Scan tipico em jogo grande gera milhoes de matches (60+ MB
- *     em vector<uint64_t>). Inviavel.
+ * Persistencia paginada de hits no SD card usando o formato definido em
+ * results_bin_format.hpp (fonte unica de verdade para overlay e sysmod).
  *
- * Layout binario simples (little-endian, fixo):
- *
- *   struct Header { uint32_t magic; uint32_t version; uint64_t count; };
- *   struct Entry  { uint64_t address; uint32_t value; uint32_t _pad; };
- *
- * Operacoes:
- *   beginWrite() / pushHit() / endWrite()  -> usado pelo first scan
- *   filterU32(predicado)                   -> next scan (le -> filtra -> escreve novo arquivo)
- *   readPage(idx, n, callback)             -> usado pela GUI para mostrar hits
- *   reset()                                -> apaga results.bin
- *   count()                                -> retorna o header.count atual
+ * O count() e' cacheado para evitar I/O a cada frame.
  */
 namespace ResultsStore {
 
-    constexpr const char *kResultsPath = "sdmc:/switch/switch-engine/results.bin";
-    constexpr const char *kTempPath    = "sdmc:/switch/switch-engine/results.tmp";
-    constexpr uint32_t    kMagic       = 0x53454E47; // 'SENG'
-    constexpr uint32_t    kVersion     = 1;
+    using Header = seng::resultsbin::Header;
+    using Entry  = seng::resultsbin::Entry;
 
-    struct Entry {
-        uint64_t address;
-        uint32_t value;
-        uint32_t _pad;
-    };
-
-    void   beginWrite();
-    void   pushHit(uint64_t address, uint32_t value);
+    void   beginWrite(seng::ValueType type, seng::CompareOp op);
+    void   pushHit(uint64_t address, uint64_t raw_value);
     void   endWrite();
 
-    bool   filterU32(std::function<bool(uint64_t addr,
-                                        uint32_t oldVal,
-                                        uint32_t *newVal)> predicate);
+    bool   filterTyped(seng::ValueType type, seng::CompareOp op,
+                       uint64_t searchVal, uint64_t searchVal2,
+                       std::function<bool(uint64_t addr,
+                                          uint64_t oldRawVal,
+                                          uint64_t *newRawVal)> readCurrent);
 
     void   readPage(size_t pageIndex, size_t pageSize,
                     std::function<void(const Entry &)> cb);
 
     size_t count();
+    void   invalidateCache();
     void   reset();
+
+    seng::ValueType currentValueType();
+    seng::CompareOp currentCompareOp();
 
 } // namespace ResultsStore

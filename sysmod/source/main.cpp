@@ -35,6 +35,7 @@
 
 #include "IpcServer.hpp"
 #include "Debugger.hpp"
+#include "FreezeManager.hpp"
 #include "SysmodLog.hpp"
 
 extern "C" {
@@ -153,10 +154,13 @@ extern "C" void __libnx_exception_handler(ThreadExceptionDump *ctx) {
 
 // =========================================================================
 int main(int /*argc*/, char ** /*argv*/) {
-    seng::mod::log::writeRaw("[main] entry");
+    seng::mod::log::write("INFO [main] entry");
 
     Debugger::init();
-    seng::mod::log::writeRaw("[main] Debugger::init OK");
+    seng::mod::log::write("INFO [main] Debugger::init OK");
+
+    FreezeManager::init(0);
+    seng::mod::log::write("INFO [main] FreezeManager::init OK");
 
     IpcServer server;
     Result rc = server.registerService();
@@ -165,11 +169,12 @@ int main(int /*argc*/, char ** /*argv*/) {
         // Nao retorna -- sleep loop pra nao consumir CPU.
         while (true) svcSleepThread(1'000'000'000ULL);
     }
-    seng::mod::log::writeRaw("[main] registerService OK; entering runForever");
+    seng::mod::log::write("INFO [main] registerService OK; entering runForever");
 
     server.runForever();
 
-    seng::mod::log::writeRaw("[main] runForever returned (unexpected)");
+    seng::mod::log::write("WARN [main] runForever returned (unexpected)");
+    FreezeManager::shutdown();
     Debugger::shutdown();
     return 0;
 }

@@ -9,115 +9,96 @@
 MemoryScanner::MemoryScanner()  = default;
 MemoryScanner::~MemoryScanner() = default;
 
-// =============================================================================
-// Iteracao de regioes mapeadas (via IPC -> sysmod -> svcQueryDebugProcessMemory)
-// =============================================================================
-Result MemoryScanner::iterateRwRegions(Handle /*unused*/,
-                                       std::function<Result(const MemoryInfo &)> cb) {
-    uint64_t addr = 0;
-    while (true) {
-        seng::MemoryRegion r{};
-        Result rc = SengClient::queryMemory(addr, &r);
-        if (R_FAILED(rc)) return rc;
-
-        // Adapta para a struct MemoryInfo de libnx (que o callback espera).
-        MemoryInfo info{};
-        info.addr = r.addr;
-        info.size = r.size;
-        info.type = r.type;
-        info.attr = r.attr;
-        info.perm = r.perm;
-
-        const bool isReadWrite = (info.perm & Perm_R) && (info.perm & Perm_W);
-        const bool isInteresting =
-            info.type == MemType_Heap               ||
-            info.type == MemType_CodeMutable        ||
-            info.type == MemType_ModuleCodeMutable  ||
-            info.type == MemType_MappedMemory       ||
-            info.type == MemType_WeirdMappedMem;
-
-        if (isReadWrite && isInteresting && info.size > 0) {
-            Result inner = cb(info);
-            if (R_FAILED(inner)) return inner;
-        }
-
-        uint64_t next = info.addr + info.size;
-        if (next <= addr) break; // wrap-around / fim
-        addr = next;
-    }
-    return 0;
-}
-
-// =============================================================================
-// Leitura em chunks (mantem RAM baixa). Cada chunk = 1 IPC ReadMemory.
-// =============================================================================
-Result MemoryScanner::readInChunks(Handle /*unused*/,
-                                   uint64_t  addr,
-                                   uint64_t  size,
-                                   std::function<Result(uint64_t,
-                                                        const uint8_t *,
-                                                        size_t)> cb) {
-    static thread_local uint8_t buffer[kScanBufferSize];
-
-    uint64_t remaining = size;
-    uint64_t cursor    = addr;
-
-    while (remaining > 0) {
-        const size_t chunk = (remaining < kScanBufferSize) ? remaining
-                                                           : kScanBufferSize;
-        size_t got = 0;
-        Result rc  = SengClient::readMemory(cursor, buffer, chunk, &got);
-        if (R_FAILED(rc) || got == 0) {
-            // Pagina protegida ou erro: pula esse chunk e segue.
-            cursor    += chunk;
-            remaining -= chunk;
-            continue;
-        }
-
-        rc = cb(cursor, buffer, got);
-        if (R_FAILED(rc)) return rc;
-
-        cursor    += got;
-        remaining -= got;
-    }
-    return 0;
-}
-
-// =============================================================================
-// First scan (uint32)
-// =============================================================================
-Result MemoryScanner::firstScanU32(uint32_t value) {
+Result MemoryScanner::firstScan(seng::ValueType type, seng::CompareOp op,
+                                uint64_t value, uint64_t value2) {
     if (m_targetPid == 0) return MAKERESULT(Module_Libnx, LibnxError_BadInput);
 
     Result rc = SengClient::initialize();
     if (R_FAILED(rc)) return rc;
 
+    seng::ScanParams params{};
+    params.pid    = m_targetPid;
+    params.value  = value;
+    params.value2 = value2;
+    params.type   = type;
+    params.op     = op;
+
     u64 hits = 0;
-    rc = SengClient::startMemoryScan(m_targetPid, value, &hits);
-    (void)hits;
+    rc = SengClient::startMemoryScan(params, &hits);
+    if (R_SUCCEEDED(rc)) {
+        ResultsStore::invalidateCache();
+    }
     return rc;
 }
 
-// =============================================================================
-// Next scan (uint32)
-// =============================================================================
-Result MemoryScanner::nextScanU32(uint32_t value) {
+namespace {
+    bool matchValueOverlay(uint64_t raw, seng::ValueType type, seng::CompareOp op,
+                           uint64_t valRaw, uint64_t val2Raw) {
+        // Reuso da logica de comparacao — versao simplificada overlay-side.
+        // Changed/Unchanged sao resolvidos pelo caller (compara old vs new).
+        switch (type) {
+            case seng::ValueType::U8:
+                return seng::CompareOp::Equal == op
+                    ? static_cast<uint8_t>(raw) == static_cast<uint8_t>(valRaw)
+                    : true;
+            case seng::ValueType::U16:
+                return seng::CompareOp::Equal == op
+                    ? static_cast<uint16_t>(raw) == static_cast<uint16_t>(valRaw)
+                    : true;
+            case seng::ValueType::U32:
+                return seng::CompareOp::Equal == op
+                    ? static_cast<uint32_t>(raw) == static_cast<uint32_t>(valRaw)
+                    : true;
+            case seng::ValueType::U64:
+                return op == seng::CompareOp::Equal ? raw == valRaw : true;
+            default:
+                return true;
+        }
+    }
+}
+
+Result MemoryScanner::nextScan(seng::ValueType type, seng::CompareOp op,
+                               uint64_t value, uint64_t value2) {
     if (m_targetPid == 0) return MAKERESULT(Module_Libnx, LibnxError_BadInput);
 
     Result rc = ProcessUtils::attachDebug(m_targetPid, nullptr);
     if (R_FAILED(rc)) return rc;
 
-    rc = ResultsStore::filterU32([&](uint64_t addr,
-                                     uint32_t /*oldVal*/,
-                                     uint32_t *newVal) {
-        uint32_t cur = 0;
-        size_t   got = 0;
-        Result   r   = SengClient::readMemory(addr, &cur, sizeof(cur), &got);
-        if (R_FAILED(r) || got != sizeof(cur)) return false;
-        *newVal = cur;
-        return cur == value;
-    });
+    const size_t valSize = seng::valueTypeSize(type);
+
+    bool ok = ResultsStore::filterTyped(type, op, value, value2,
+        [&](uint64_t addr, uint64_t oldRaw, uint64_t *newRaw) -> bool {
+            uint64_t cur = 0;
+            size_t   got = 0;
+            Result   r   = SengClient::readMemory(addr, &cur, valSize, &got);
+            if (R_FAILED(r) || got != valSize) return false;
+            *newRaw = cur;
+
+            switch (op) {
+                case seng::CompareOp::Equal:
+                    return cur == value;
+                case seng::CompareOp::NotEqual:
+                    return cur != value;
+                case seng::CompareOp::GreaterThan:
+                    return cur > value;
+                case seng::CompareOp::LessThan:
+                    return cur < value;
+                case seng::CompareOp::GreaterOrEqual:
+                    return cur >= value;
+                case seng::CompareOp::LessOrEqual:
+                    return cur <= value;
+                case seng::CompareOp::Between:
+                    return cur >= value && cur <= value2;
+                case seng::CompareOp::Changed:
+                    return cur != oldRaw;
+                case seng::CompareOp::Unchanged:
+                    return cur == oldRaw;
+                case seng::CompareOp::Unknown:
+                    return true;
+            }
+            return false;
+        });
 
     ProcessUtils::detachDebug(0);
-    return rc;
+    return ok ? 0 : MAKERESULT(Module_Libnx, LibnxError_NotFound);
 }

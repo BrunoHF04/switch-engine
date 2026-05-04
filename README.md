@@ -12,10 +12,13 @@ Esse desenho em duas partes e necessario porque overlays Tesla nao possuem permi
 
 O Switch Engine permite:
 
-- Detectar o processo do jogo automaticamente via PGL/pm ou selecionar manualmente pela lista de processos.
-- Realizar **First Scan** por valor numerico (`u32`) em regioes de memoria R/W (heap, code mutable, mapped memory).
+- Detectar o processo do jogo automaticamente via PGL/pm ou selecionar manualmente pela lista de processos (com nomes).
+- Selecionar o **tipo de valor** (u8, u16, u32, u64, f32, f64) e **comparador** (==, !=, >, <, >=, <=, between, changed, unchanged, unknown).
+- Realizar **First Scan** em regioes de memoria R/W (heap, code mutable, mapped memory).
 - Realizar **Next Scan** para refinar resultados com um novo valor.
-- Navegar resultados paginados e aplicar **poke** (escrita de memoria) em enderecos encontrados — o valor muda em tempo real no jogo.
+- Navegar resultados paginados e aplicar **poke** (escrita de memoria) com **undo** (desfazer).
+- **Congelar** enderecos (freeze/lock) — o sysmod escreve continuamente o valor a ~60fps.
+- **Exportar cheats** no formato Atmosphere (`/atmosphere/contents/<TID>/cheats/`).
 - Persistir resultados e configuracoes no SD para manter estado entre aberturas.
 
 </details>
@@ -27,10 +30,12 @@ O Switch Engine permite:
 +---------------------------+         +---------------------------+
 |  switch-engine.ovl        |  IPC    |  switch-engine-mod.nsp   |
 |  (Tesla Overlay)          | <-----> |  (Atmosphere SysModule)  |
-|  - UI (libtesla)          |  seng:  |  - svcDebugActiveProcess |
+|  - UI (libtesla)          |  seng   |  - svcDebugActiveProcess |
 |  - fluxo de scan          |  CMIF   |  - svcReadDebugProcess   |
 |  - resultados no SD       |  HIPC   |  - svcWriteDebugProcess  |
 |  - i18n EN/PT-BR          |         |  - svcGetProcessList     |
+|  - scan assincrono        |         |  - FreezeManager (thread)|
+|  - undo poke / export     |         |                          |
 +---------------------------+         +---------------------------+
 ```
 
@@ -49,14 +54,16 @@ Para evitar congelar o jogo, o sysmod segue o padrao **attach → opera → deta
 
 - **Scan**: attach ao PID, percorre todas as regioes R/W, grava hits em `results.bin`, detach.
 - **Poke**: attach ao PID, escreve o valor no endereco, detach imediato.
+- **Freeze**: thread dedicada faz attach → write (todos os slots) → detach a cada ~16ms.
 
 ### Componentes principais
 
 - `source/gui/`: telas do overlay (`MainGui`, `ProcessListGui`, `ResultsListGui`, `NumericInputGui`, `LanguageGui`).
 - `source/scanner/`: cliente IPC (`SengClient`), scanner de memoria e armazenamento de resultados.
-- `source/util/`: logger e sistema de idioma (EN/PT-BR).
-- `sysmod/source/`: servidor IPC (`IpcServer`), camada de debug (`Debugger`), scan no sysmod (`ScanRunner`) e logs.
+- `source/util/`: logger estruturado e sistema de idioma (EN/PT-BR).
+- `sysmod/source/`: servidor IPC (`IpcServer`), camada de debug (`Debugger`), scan no sysmod (`ScanRunner`), freeze (`FreezeManager`) e logs.
 - `include/seng_ipc.hpp`: contrato IPC compartilhado entre overlay e sysmod.
+- `include/results_bin_format.hpp`: formato binario de resultados (compartilhado).
 
 </details>
 
@@ -134,6 +141,7 @@ Importante:
 - O arquivo `boot2.flag` deve existir (arquivo vazio) para autostart do sysmod no boot.
 - Apos instalar/atualizar o **sysmod**, faca **reboot completo** do console (nao apenas sleep/wake).
 - A atualizacao do **overlay** nao requer reboot — basta fechar e reabrir o Tesla Menu.
+- **Atualize sempre overlay e sysmod juntos** — a versao IPC e verificada no boot.
 
 </details>
 
@@ -145,11 +153,17 @@ Importante:
 3. Selecione **Switch Engine**.
 4. Escolha o alvo:
    - **Auto: jogo (PGL/pm)** — detecta automaticamente o jogo em execucao.
-   - **Escolher processo...** — lista todos os processos com PID e TID.
-5. Defina o valor de busca (uint32).
-6. Execute **Primeira Busca**.
-7. Altere o valor no jogo e rode **Proxima Busca** para filtrar.
-8. Abra **Ver Resultados** e clique num endereco para alterar o valor (poke).
+   - **Escolher processo...** — lista todos os processos com PID, TID e nome.
+5. Selecione o **tipo de valor** (u8, u16, u32, u64, f32, f64).
+6. Selecione o **comparador** (==, !=, >, <, >=, <=, between, changed, unchanged, unknown).
+7. Defina o valor de busca.
+8. Execute **Primeira Busca** (roda em thread separada — UI nao trava).
+9. Altere o valor no jogo e rode **Proxima Busca** para filtrar.
+10. Abra **Ver Resultados**:
+    - Clique num endereco para alterar o valor (**poke**).
+    - Use **Undo last poke** para desfazer a ultima escrita.
+    - Use **Freeze this address** para congelar um valor (escrita continua a ~60fps).
+    - Use **Export cheats** para salvar no formato Atmosphere.
 
 </details>
 
@@ -168,11 +182,12 @@ A selecao e salva em `sdmc:/switch/switch-engine/config.ini`. As strings ficam e
 <details>
 <summary><h2>Logs e diagnostico</h2></summary>
 
+Todos os logs usam timestamps monotonicos (ms desde boot) e niveis (INFO/WARN/ERR).
+
 | Arquivo | Descricao |
 |---------|-----------|
 | `sdmc:/switch-engine.log` | Log do overlay (init, poke, erros IPC) |
-| `sdmc:/switch-engine_debug.log` | Log detalhado do overlay (ciclo de vida) |
-| `sdmc:/switch-engine_mod.log` | Log do sysmod (IPC, scan, debug, processos) |
+| `sdmc:/switch-engine_mod.log` | Log do sysmod (IPC, scan, debug, freeze) |
 | `sdmc:/switch-engine_mod_crash.log` | Dump de exception do sysmod (PC/LR/registros) |
 | `sdmc:/atmosphere/crash_reports/` | Crash reports gerais do Atmosphere |
 
@@ -181,12 +196,13 @@ Se algo nao funcionar:
 1. Verifique se `boot2.flag` esta presente.
 2. Verifique se o `exefs.nsp` foi atualizado no SD.
 3. Leia `sdmc:/switch-engine_mod.log` — ele mostra cada comando IPC recebido e o resultado.
-4. Reinicie o console por power-cycle (nao apenas sleep/wake).
+4. Verifique se as versoes do overlay e sysmod sao compativeis (log mostra warning se diferem).
+5. Reinicie o console por power-cycle (nao apenas sleep/wake).
 
 </details>
 
 <details>
-<summary><h2>Contrato IPC (<code>seng</code> v2)</h2></summary>
+<summary><h2>Contrato IPC (<code>seng</code> v3)</h2></summary>
 
 | Cmd | Nome | Entrada | Saida |
 |-----|------|---------|-------|
@@ -201,25 +217,41 @@ Se algo nao funcionar:
 | 8 | `IsAttached` | — | `u8 attached` |
 | 9 | `ListProcessesLegacy` | (alias de 10) | — |
 | 10 | `ListProcesses` | `u64 max` + buffer out | `u64 count` |
-| 11 | `StartMemoryScan` | `u64 pid, u32 value` | `u64 total_hits` |
+| 11 | `StartMemoryScan` | `ScanParams` | `u64 total_hits` |
+| 12 | `AddFreeze` | `FreezeParams` | `u8 slot` |
+| 13 | `RemoveFreeze` | `u8 slot` | — |
+| 14 | `ListFreezes` | buffer out | `u8 count` |
+| 15 | `ClearFreezes` | — | — |
+
+Tipos suportados: `u8`, `u16`, `u32`, `u64`, `f32`, `f64`.
+
+Comparadores: `==`, `!=`, `>`, `<`, `>=`, `<=`, `between`, `changed`, `unchanged`, `unknown`.
 
 Limitacoes:
 
 - Buffer maximo por leitura/escrita: **64 KB**.
 - Lista de processos: ate **64** entradas por chamada.
-- Scan atual: somente **uint32** com comparador de igualdade.
+- Slots de freeze: ate **16** enderecos simultaneos.
 
 </details>
 
 <details>
 <summary><h2>Roadmap</h2></summary>
 
-- [ ] Comparadores adicionais (`>=`, `<=`, `between`, `changed`, `unchanged`).
-- [ ] Suporte a tipos numericos adicionais (u8, u16, u64, f32, f64).
-- [ ] Freeze/lock de enderecos (escrita continua em loop).
-- [ ] Scan em thread separada para melhor responsividade da UI.
-- [ ] Nomes dos processos na lista (via NACP quando disponivel).
-- [ ] Exportacao/importacao de cheat codes.
+- [x] Comparadores adicionais (`>=`, `<=`, `between`, `changed`, `unchanged`).
+- [x] Suporte a tipos numericos adicionais (u8, u16, u64, f32, f64).
+- [x] Freeze/lock de enderecos (escrita continua em loop).
+- [x] Scan em thread separada para melhor responsividade da UI.
+- [x] Nomes dos processos na lista.
+- [x] Exportacao de cheat codes (formato Atmosphere).
+- [x] Undo de poke (leitura antes de escrita).
+- [x] Verificacao de versao IPC no boot.
+- [x] Cache de count() no ResultsStore.
+- [x] Logging estruturado com niveis e timestamps.
+- [ ] Leitura de nomes NACP reais dos aplicativos.
+- [ ] Importacao de cheat codes.
+- [ ] Scan com wildcard de ponteiros (pointer scan).
+- [ ] Editor hexadecimal in-place.
 
 </details>
 

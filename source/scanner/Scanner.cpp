@@ -14,9 +14,9 @@ namespace Scanner {
         Result rc = SengClient::initialize();
         if (R_FAILED(rc)) return rc;
 
-        seng::ProcessEntry entries[seng::kMaxProcessList]{};
-        size_t             n = 0;
-        rc = SengClient::listProcesses(entries, seng::kMaxProcessList, &n);
+        // Verificacao de versao: garante compatibilidade overlay <-> sysmod.
+        uint32_t sysmodVersion = 0;
+        rc = SengClient::getVersion(&sysmodVersion);
         if (R_FAILED(rc)) return rc;
 
         return ProcessUtils::getForegroundApplication(out_pid, out_tid);

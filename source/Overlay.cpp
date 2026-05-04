@@ -13,98 +13,68 @@
 #include <cstdio>
 
 namespace {
-    constexpr const char *kBaseDir   = "sdmc:/switch/switch-engine";
-    constexpr const char *kDebugPath = "sdmc:/switch-engine_debug.log";
+    constexpr const char *kBaseDir = "sdmc:/switch/switch-engine";
 
     void ensureStorageDirs() {
-        // Idempotente: se ja existem, mkdir falha com EEXIST (ignoramos).
-        // A chamada e' segura porque main() ja fez fsdevMountSdmc().
         mkdir("sdmc:/switch", 0777);
         mkdir(kBaseDir, 0777);
     }
-
-    // Escrita de debug "burra": fopen/fputs/fclose. Sem locks, sem state
-    // global, sem dependencias do nosso codigo. Se o NSO chega aqui, o
-    // arquivo aparece no SD -- mesmo que tudo crashe na linha seguinte.
-    // Usar somente em pontos onde queremos "tracer bullets" de boot.
-    void rawDebugMark(const char *msg) {
-        FILE *fp = std::fopen(kDebugPath, "a");
-        if (!fp) return;
-        std::fputs(msg, fp);
-        std::fputc('\n', fp);
-        std::fflush(fp);
-        std::fclose(fp);
-    }
-} // namespace
+}
 
 SwitchEngineOverlay::SwitchEngineOverlay() {
-    // ATENCAO: este e' o primeiro ponto do nosso codigo que executa apos
-    // o nx-ovlloader+ instanciar a classe via tsl::loop<>. Se este arquivo
-    // de debug NAO aparecer em sdmc:/switch-engine_debug.log, significa
-    // que o ovlloader sequer chegou aqui (problema de loader/specs/cache).
-    rawDebugMark("[debug] Overlay Iniciado (ctor)");
-    seng::log::write("[overlay] ctor");
+    seng::log::write("INFO [overlay] ctor");
 }
 
 SwitchEngineOverlay::~SwitchEngineOverlay() {
-    rawDebugMark("[debug] Overlay finalizado (dtor)");
-    seng::log::write("[overlay] dtor");
+    seng::log::write("INFO [overlay] dtor");
 }
 
 void SwitchEngineOverlay::initServices() {
-    rawDebugMark("[debug] initServices begin");
     m_sengReady = false;
-
-    // Logs em SD so depois de mkdir: reduz risco de I/O antes de paths existirem.
     ensureStorageDirs();
-    rawDebugMark("[debug] initServices after ensureStorageDirs");
 
-    {
-        char tidbuf[96];
-        std::snprintf(
-            tidbuf, sizeof(tidbuf),
-            "[debug] expected sysmod TID 0x%016" PRIx64 " (seng)",
-            static_cast<unsigned long long>(seng::kSysmodTitleId));
-        rawDebugMark(tidbuf);
-    }
+    seng::log::write("INFO [overlay] initServices begin, expected TID 0x%016" PRIx64,
+                     static_cast<unsigned long long>(seng::kSysmodTitleId));
 
-    // Ate ~2 s tentando "seng" (evita bloqueio indefinido se SM/sysmod atrasar).
     constexpr u64 kSengConnectMaxNs = 2'000'000'000ULL;
     Result rc = SengClient::initializeTimed(kSengConnectMaxNs);
     m_sengReady = R_SUCCEEDED(rc);
 
-    seng::log::write("[overlay] initServices seng probe rc=0x%08X ready=%d",
-                     rc, m_sengReady ? 1 : 0);
-    if (R_FAILED(rc)) {
-        seng::log::write("[overlay] sysmod unreachable (service seng). TID esperado=0x%016" PRIx64,
-                         static_cast<unsigned long long>(seng::kSysmodTitleId));
+    seng::log::write("INFO [overlay] seng probe rc=0x%08X ready=%d", rc, m_sengReady ? 1 : 0);
+
+    if (m_sengReady) {
+        // Verificacao de versao IPC: detecta mismatch overlay <-> sysmod.
+        uint32_t sysmodVer = 0;
+        Result vrc = SengClient::getVersion(&sysmodVer);
+        if (R_SUCCEEDED(vrc) && sysmodVer != seng::kIpcVersion) {
+            seng::log::write("WARN [overlay] version mismatch: sysmod=%u overlay=%u",
+                             sysmodVer, seng::kIpcVersion);
+            m_versionMismatch = true;
+            m_sysmodVersion   = sysmodVer;
+        }
     }
 
-    rawDebugMark("[debug] initServices passed seng probe");
-    seng::log::write("[overlay] initServices end (pos-probe seng)");
+    seng::log::write("INFO [overlay] initServices end");
 }
 
 void SwitchEngineOverlay::exitServices() {
-    seng::log::write("[overlay] exitServices");
+    seng::log::write("INFO [overlay] exitServices");
     SengClient::finalize();
 }
 
 void SwitchEngineOverlay::onShow() {
-    rawDebugMark("[debug] onShow");
-    seng::log::write("[overlay] onShow");
+    seng::log::write("INFO [overlay] onShow");
 }
 
 void SwitchEngineOverlay::onHide() {
-    seng::log::write("[overlay] onHide");
+    seng::log::write("INFO [overlay] onHide");
 }
 
 std::unique_ptr<tsl::Gui> SwitchEngineOverlay::loadInitialGui() {
     if (!m_sengReady) {
-        rawDebugMark("[debug] loadInitialGui -> SysmodMissingGui");
-        seng::log::write("[overlay] loadInitialGui -> SysmodMissingGui");
+        seng::log::write("INFO [overlay] loadInitialGui -> SysmodMissingGui");
         return initially<SysmodMissingGui>();
     }
-    rawDebugMark("[debug] loadInitialGui -> MainGui");
-    seng::log::write("[overlay] loadInitialGui -> MainGui");
+    seng::log::write("INFO [overlay] loadInitialGui -> MainGui");
     return initially<MainGui>();
 }

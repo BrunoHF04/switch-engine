@@ -5,6 +5,8 @@
 #include <ctime>
 #include <mutex>
 
+#include <switch.h>
+
 namespace seng::log {
 
     namespace {
@@ -13,15 +15,13 @@ namespace seng::log {
 
         void ensureOpen_locked() {
             if (g_fp != nullptr) return;
-            // "a" -> append. Se nao existir, cria.
             g_fp = std::fopen(kPath, "a");
         }
 
         void writeTimestamp_locked() {
-            // tick contador (sem RTC, evita dependencia em time services).
-            // Suficiente para ver ordenacao das mensagens.
-            static unsigned long long counter = 0;
-            std::fprintf(g_fp, "[%06llu] ", counter++);
+            u64 ms = armTicksToNs(armGetSystemTick()) / 1'000'000ULL;
+            std::fprintf(g_fp, "[%010llu] ",
+                         static_cast<unsigned long long>(ms));
         }
     }
 
@@ -55,7 +55,6 @@ namespace seng::log {
             std::fclose(g_fp);
             g_fp = nullptr;
         }
-        // Sobrescreve com tamanho 0.
         FILE *fp = std::fopen(kPath, "w");
         if (fp) std::fclose(fp);
     }

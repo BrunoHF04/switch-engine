@@ -3,32 +3,30 @@
 #include <tesla.hpp>
 
 #include <cstdint>
+#include <vector>
 
 /**
  * ResultsListGui
  *
- * Mostra os hits salvos em sdmc:/switch/switch-engine/results.bin de forma
- * paginada (kPageSize por pagina). Clicar num hit abre o NumericInputGui com
- * "poke" -- o valor digitado e' escrito no endereco via SengClient::writeMemory.
- *
- * A pid alvo e' passada do MainGui para que possamos garantir que o sysmod
- * esteja attached antes de cada poke (caso o usuario abra essa tela sem ter
- * rodado um scan na sessao atual).
- *
- * Pagina atual e' rebuildada in-place com List::clear()+addItem (libtesla
- * defere as duas operacoes para o proximo draw, sem use-after-free).
+ * Mostra hits paginados com suporte a:
+ *   - Poke com undo (guarda ultimo valor antes de escrever)
+ *   - Freeze (congela endereco via FreezeManager no sysmod)
+ *   - Export cheats no formato Atmosphere
  */
 class ResultsListGui : public tsl::Gui {
 public:
     static constexpr size_t kPageSize = 24;
+    static constexpr size_t kUndoStackSize = 32;
 
-    explicit ResultsListGui(uint64_t targetPid, size_t initialPage = 0);
+    explicit ResultsListGui(uint64_t targetPid, uint64_t titleId,
+                            size_t initialPage = 0);
 
     tsl::elm::Element *createUI() override;
     void               update() override;
 
 private:
     uint64_t        m_targetPid;
+    uint64_t        m_titleId;
     size_t          m_currentPage;
     size_t          m_total            = 0;
     size_t          m_lastBuiltCount   = 0;
@@ -36,5 +34,16 @@ private:
 
     tsl::elm::List *m_list = nullptr;
 
+    struct UndoEntry {
+        uint64_t addr;
+        uint64_t oldValue;
+        size_t   valueSize;
+    };
+    std::vector<UndoEntry> m_undoStack;
+
     void rebuild();
+    void doPoke(uint64_t addr, uint64_t value);
+    void doUndo();
+    void doFreeze(uint64_t addr, uint64_t value);
+    void doExportCheats();
 };

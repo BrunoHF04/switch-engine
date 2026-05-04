@@ -5,34 +5,17 @@
 
 #include <cinttypes>
 #include <cstdio>
+#include <cstring>
 
 namespace i18n = seng::i18n;
 
 namespace {
-    // Heuristica simples para classificar o processo na UI. Nao queremos
-    // ESCONDER nada -- o user pode escolher qualquer um -- so' rotular.
-    //
-    //   - tid == 0          -> "Process" (provavelmente init/kernel-side)
-    //   - tid em [0x0100000000000000, 0x01FFFFFFFFFFFFFF] -> "App"
-    //   - tid em [0x0500000000000000, ..]                 -> "Sysmod"
-    //   - resto             -> "Process"
     const char *classifyTid(uint64_t tid) {
         if (tid == 0) return "Process";
-        if ((tid >> 56) == 0x01) {
-            // Faixa de aplicativos comerciais.
-            // Range exato (de pmla): 0x010000_00000_00000 .. 0x01FFFFFFFFFFFFFF
-            return "App";
-        }
-        if (tid >= 0x0100000000000000ULL && tid < 0x0200000000000000ULL) {
-            return "App";
-        }
-        if (tid >= 0x0500000000000000ULL && tid < 0x0600000000000000ULL) {
-            return "Sysmod";
-        }
-        if ((tid >> 60) == 0x4 || (tid >> 60) == 0x5) {
-            // 0x4...... e 0x5...... sao TIDs custom (sysmods de homebrew).
-            return "Sysmod";
-        }
+        if ((tid >> 56) == 0x01) return "App";
+        if (tid >= 0x0100000000000000ULL && tid < 0x0200000000000000ULL) return "App";
+        if (tid >= 0x0500000000000000ULL && tid < 0x0600000000000000ULL) return "Sysmod";
+        if ((tid >> 60) == 0x4 || (tid >> 60) == 0x5) return "Sysmod";
         return "Process";
     }
 }
@@ -45,7 +28,6 @@ tsl::elm::Element *ProcessListGui::createUI() {
                                               i18n::tr(i18n::S::ProcessListTitle));
     auto *list  = new tsl::elm::List();
 
-    // Faz a chamada IPC e popula a UI. Em caso de erro, mostra status.
     seng::ProcessEntry entries[seng::kMaxProcessList] = {};
     size_t count = 0;
     Result rc = SengClient::listProcesses(entries, seng::kMaxProcessList,
@@ -64,9 +46,7 @@ tsl::elm::Element *ProcessListGui::createUI() {
 
     size_t usable = 0;
     for (size_t i = 0; i < count; ++i) {
-        if (entries[i].pid != 0) {
-            ++usable;
-        }
+        if (entries[i].pid != 0) ++usable;
     }
 
     if (usable == 0) {
@@ -85,15 +65,19 @@ tsl::elm::Element *ProcessListGui::createUI() {
 
     for (size_t i = 0; i < count; ++i) {
         const seng::ProcessEntry &e = entries[i];
-        if (e.pid == 0) {
-            continue;
+        if (e.pid == 0) continue;
+
+        char title[48];
+        char sub[96];
+
+        // Usa o name do ProcessEntry quando disponivel.
+        if (e.name[0] != '\0') {
+            std::snprintf(title, sizeof(title), "%s (PID %" PRIu64 ")",
+                          e.name, e.pid);
+        } else {
+            std::snprintf(title, sizeof(title), "PID %" PRIu64, e.pid);
         }
 
-        // Coluna esquerda (tesla trunca por largura): so PID — o tipo e TID
-        // completos ficam na sublinha.
-        char title[32];
-        char sub[96];
-        std::snprintf(title, sizeof(title), "PID %" PRIu64, e.pid);
         if (e.tid != 0) {
             std::snprintf(sub, sizeof(sub), "%s  0x%016" PRIx64,
                           classifyTid(e.tid), e.tid);

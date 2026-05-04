@@ -10,13 +10,8 @@ namespace SengClient {
         std::atomic<bool> g_initialized{false};
 
         Result connect() {
-            SmServiceName name = smEncodeName(seng::kServiceName);
             return smGetService(&g_srv, seng::kServiceName);
         }
-
-        // Helpers tipados para reduzir boilerplate.
-        // <In> sao os argumentos enviados (alem do command id).
-        // <Out> e' o que retorna alem do Result.
 
         template <typename Out>
         Result dispatchOut(seng::Cmd cmd, Out *out) {
@@ -49,9 +44,9 @@ namespace SengClient {
     Result initializeTimed(u64 maxWaitNs) {
         if (g_initialized.load()) return 0;
 
-        constexpr u64 kSliceNs = 50'000'000ULL; // 50 ms
-        u64             waited   = 0;
-        Result          lastRc   = 0;
+        constexpr u64 kSliceNs = 50'000'000ULL;
+        u64     waited = 0;
+        Result  lastRc = 0;
 
         while (waited < maxWaitNs) {
             std::memset(&g_srv, 0, sizeof(g_srv));
@@ -74,7 +69,6 @@ namespace SengClient {
 
     bool isInitialized() { return g_initialized.load(); }
 
-    // ---------------------------------------------------------------------
     Result getVersion(uint32_t *out_version) {
         return dispatchOut(seng::Cmd::GetVersion, out_version);
     }
@@ -106,14 +100,11 @@ namespace SengClient {
         return dispatchInOut(seng::Cmd::QueryMemory, addr, out);
     }
 
-    // ---------------------------------------------------------------------
-    // ReadMemory: usa Type-B (server escreve, cliente le).
-    // ---------------------------------------------------------------------
     Result readMemory(uint64_t addr, void *dst, size_t size, size_t *out_read) {
         if (size > seng::kMaxChunkBytes) size = seng::kMaxChunkBytes;
 
-        struct InArgs  { u64 addr; u64 size; } __attribute__((packed));
-        struct OutArgs { u64 read; }            __attribute__((packed));
+        struct InArgs  { u64 addr; u64 size; };
+        struct OutArgs { u64 read; };
 
         InArgs  in{ addr, size };
         OutArgs out{ 0 };
@@ -131,10 +122,28 @@ namespace SengClient {
         return rc;
     }
 
-    // ---------------------------------------------------------------------
-    // ListProcesses: usa Type-B (server escreve buffer com array de
-    // ProcessEntry; reply payload tem o count efetivo).
-    // ---------------------------------------------------------------------
+    Result writeMemory(uint64_t addr, const void *src, size_t size, size_t *out_written) {
+        if (size > seng::kMaxChunkBytes) size = seng::kMaxChunkBytes;
+
+        struct InArgs  { u64 addr; u64 size; };
+        struct OutArgs { u64 written; };
+
+        InArgs  in{ addr, size };
+        OutArgs out{ 0 };
+
+        Result rc = serviceDispatchInOut(
+            &g_srv, static_cast<u32>(seng::Cmd::WriteMemory), in, out,
+            .buffer_attrs = {
+                SfBufferAttr_HipcMapAlias | SfBufferAttr_In,
+            },
+            .buffers = {
+                { const_cast<void *>(src), size },
+            }
+        );
+        if (R_SUCCEEDED(rc) && out_written) *out_written = out.written;
+        return rc;
+    }
+
     Result listProcesses(seng::ProcessEntry *out,
                          size_t              max,
                          size_t             *out_count) {
@@ -143,8 +152,8 @@ namespace SengClient {
         }
         if (max > seng::kMaxProcessList) max = seng::kMaxProcessList;
 
-        struct InArgs  { u64 max; }   __attribute__((packed));
-        struct OutArgs { u64 count; } __attribute__((packed));
+        struct InArgs  { u64 max; };
+        struct OutArgs { u64 count; };
 
         InArgs  in{ max };
         OutArgs o{ 0 };
@@ -167,21 +176,12 @@ namespace SengClient {
         return rc;
     }
 
-    // ---------------------------------------------------------------------
-    // StartMemoryScan (cmd 11): scan completo no sysmod.
-    // ---------------------------------------------------------------------
-    Result startMemoryScan(uint64_t pid, uint32_t value, uint64_t *out_total_hits) {
-        struct InArgs {
-            u64 pid;
-            u32 value;
-        } __attribute__((packed));
-        struct OutArgs { u64 total_hits; } __attribute__((packed));
-
-        InArgs  in{ pid, value };
+    Result startMemoryScan(const seng::ScanParams &params, uint64_t *out_total_hits) {
+        struct OutArgs { u64 total_hits; };
         OutArgs out{ 0 };
 
         Result rc = serviceDispatchInOut(
-            &g_srv, static_cast<u32>(seng::Cmd::StartMemoryScan), in, out);
+            &g_srv, static_cast<u32>(seng::Cmd::StartMemoryScan), params, out);
         if (R_SUCCEEDED(rc) && out_total_hits) {
             *out_total_hits = out.total_hits;
         } else if (out_total_hits) {
@@ -190,29 +190,50 @@ namespace SengClient {
         return rc;
     }
 
-    // ---------------------------------------------------------------------
-    // WriteMemory: usa Type-A (cliente envia, server le).
-    // ---------------------------------------------------------------------
-    Result writeMemory(uint64_t addr, const void *src, size_t size, size_t *out_written) {
-        if (size > seng::kMaxChunkBytes) size = seng::kMaxChunkBytes;
+    Result addFreeze(uint64_t addr, seng::ValueType type, uint64_t value,
+                     uint8_t *out_slot) {
+        seng::FreezeParams fp{};
+        fp.addr  = addr;
+        fp.value = value;
+        fp.type  = type;
 
-        struct InArgs  { u64 addr; u64 size; } __attribute__((packed));
-        struct OutArgs { u64 written; }         __attribute__((packed));
+        u8 slot = 0xFF;
+        Result rc = dispatchInOut(seng::Cmd::AddFreeze, fp, &slot);
+        if (out_slot) *out_slot = slot;
+        return rc;
+    }
 
-        InArgs  in{ addr, size };
-        OutArgs out{ 0 };
+    Result removeFreeze(uint8_t slot) {
+        return dispatchIn(seng::Cmd::RemoveFreeze, slot);
+    }
 
-        Result rc = serviceDispatchInOut(
-            &g_srv, static_cast<u32>(seng::Cmd::WriteMemory), in, out,
+    Result listFreezes(seng::FreezeEntry *out, size_t max, size_t *out_count) {
+        if (!out || !out_count) {
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        }
+        if (max > seng::kMaxFreezeSlots) max = seng::kMaxFreezeSlots;
+
+        u8 count_out = 0;
+
+        Result rc = serviceDispatchOut(
+            &g_srv, static_cast<u32>(seng::Cmd::ListFreezes), count_out,
             .buffer_attrs = {
-                SfBufferAttr_HipcMapAlias | SfBufferAttr_In,
+                SfBufferAttr_HipcMapAlias | SfBufferAttr_Out,
             },
             .buffers = {
-                { const_cast<void *>(src), size },
+                { out, max * sizeof(seng::FreezeEntry) },
             }
         );
-        if (R_SUCCEEDED(rc) && out_written) *out_written = out.written;
+        if (R_SUCCEEDED(rc)) {
+            *out_count = count_out;
+        } else {
+            *out_count = 0;
+        }
         return rc;
+    }
+
+    Result clearFreezes() {
+        return dispatchVoid(seng::Cmd::ClearFreezes);
     }
 
 } // namespace SengClient

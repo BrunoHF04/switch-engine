@@ -12,20 +12,17 @@ namespace seng::i18n {
         constexpr const char *kConfigDir  = "sdmc:/switch/switch-engine";
         constexpr const char *kConfigPath = "sdmc:/switch/switch-engine/config.ini";
 
-        // Tabela de traducoes. Indice = static_cast<size_t>(S::xxx).
-        // Cada linha tem [En, PtBr].
-        // ATENCAO: ordem TEM que bater com a enum em Language.hpp.
         constexpr const char *kStrings[static_cast<size_t>(S::Count)][2] = {
             // ---- MainGui categorias ----
             /* TargetProcessHeader */ { "Target Process",       "Processo Alvo"          },
-            /* SearchValueHeader   */ { "Search Value (uint32)","Valor a Buscar (uint32)"},
+            /* SearchValueHeader   */ { "Search Value",         "Valor a Buscar"         },
             /* ScanHeader          */ { "Scan",                  "Busca"                  },
             /* ResultsHeader       */ { "Results",               "Resultados"             },
             /* StatusHeader        */ { "Status",                "Status"                 },
             /* SettingsHeader      */ { "Settings",              "Configuracoes"          },
 
             // ---- MainGui itens ----
-            /* DetectForeground    */ { "Auto: game (PGL/pm)",     "Auto: jogo (PGL/pm)" },
+            /* DetectForeground    */ { "Auto: game (PGL/pm)",   "Auto: jogo (PGL/pm)"   },
             /* PickProcess         */ { "Pick process...",       "Escolher processo..."   },
             /* NoTarget            */ { "(no target)",           "(sem alvo)"             },
             /* SetValue            */ { "Set value",             "Definir valor"          },
@@ -65,8 +62,8 @@ namespace seng::i18n {
             /* Navigation          */ { "Navigation",            "Navegacao"              },
             /* PreviousPage        */ { "Previous Page",         "Pagina Anterior"        },
             /* NextPage            */ { "Next Page",             "Proxima Pagina"         },
-            /* PokeValueTitle      */ { "Poke value (uint32)",   "Alterar valor (uint32)" },
-            /* SearchValueTitle    */ { "Search value (uint32)", "Valor a buscar (uint32)"},
+            /* PokeValueTitle      */ { "Poke value",            "Alterar valor"          },
+            /* SearchValueTitle    */ { "Search value",          "Valor a buscar"         },
 
             // ---- NumericInputGui ----
             /* ValueDecimalHeader  */ { "Value (decimal)",       "Valor (decimal)"        },
@@ -92,8 +89,8 @@ namespace seng::i18n {
 
             // ---- Creditos ----
             /* CreditsHeader       */ { "Credits",               "Creditos"               },
-            /* CreditsDeveloperLabel */ { "Developer",         "Desenvolvedor"          },
-            /* CreditsDeveloperName */ { "Bruno Fernandes",   "Bruno Fernandes"        },
+            /* CreditsDeveloperLabel */ { "Developer",           "Desenvolvedor"          },
+            /* CreditsDeveloperName */ { "Bruno Fernandes",      "Bruno Fernandes"        },
             /* CreditsWebLabel     */ { "Portfolio",             "Portfolio"              },
             /* CreditsWebUrl       */ { "bruno-fernandes.online","bruno-fernandes.online" },
 
@@ -105,17 +102,37 @@ namespace seng::i18n {
                                         "Instale TID 0x420000000053454E + reinicie" },
 
             // ---- Subtitulo do overlay ----
-            /* OverlaySubtitle     */ { "Memory Scanner v0.2",   "Buscador de Memoria v0.2" },
+            /* OverlaySubtitle     */ { "Memory Scanner v0.3",   "Buscador de Memoria v0.3" },
+
+            // ---- Novos (v3) ----
+            /* ValueTypeHeader     */ { "Value Type",            "Tipo de Valor"          },
+            /* CompareOpHeader     */ { "Comparator",            "Comparador"             },
+            /* FreezeHeader        */ { "Freeze",                "Congelar"               },
+            /* FreezeAdd           */ { "Freeze this address",   "Congelar este endereco" },
+            /* FreezeRemove        */ { "Unfreeze",              "Descongelar"            },
+            /* FreezeClear         */ { "Clear all freezes",     "Limpar todos congelados"},
+            /* FreezeSlotFmt       */ { "Frozen: 0x%010llX = %llu",
+                                        "Congelado: 0x%010llX = %llu"                    },
+            /* FreezeAdded         */ { "address frozen",        "endereco congelado"     },
+            /* FreezeRemoved       */ { "freeze removed",        "congelamento removido"  },
+            /* FreezeCleared       */ { "all freezes cleared",   "todos descongelados"    },
+            /* FreezeFullFmt       */ { "freeze full (max %zu)", "cheio (max %zu)"        },
+            /* UndoPoke            */ { "Undo last poke",        "Desfazer ultimo poke"   },
+            /* UndoEmpty           */ { "nothing to undo",       "nada para desfazer"     },
+            /* UndoAppliedFmt      */ { "undo: 0x%010llX",       "desfeito: 0x%010llX"    },
+            /* ExportCheats        */ { "Export cheats (Atmo.)",  "Exportar cheats (Atmo.)"},
+            /* ExportDoneFmt       */ { "exported %zu cheats",    "exportou %zu cheats"   },
+            /* ExportFailedFmt     */ { "export failed (rc=0x%08X)", "exportacao falhou (rc=0x%08X)"},
+            /* VersionMismatchFmt  */ { "sysmod v%u != overlay v%u",
+                                        "sysmod v%u != overlay v%u"                      },
         };
 
-        // Garante em compile-time que esquecemos de uma entrada.
         static_assert(sizeof(kStrings) / sizeof(kStrings[0])
                           == static_cast<size_t>(S::Count),
-                      "Lang table size mismatch -- some StringId nao foi traduzido");
+                      "Lang table size mismatch");
 
         bool parseLangCode(const char *value, Lang *out) {
             if (!value || !out) return false;
-            // Aceita "en", "EN", "en-US" -> En; "pt-BR", "pt", "ptbr" -> PtBr.
             if (std::strncmp(value, "pt", 2) == 0) {
                 *out = Lang::PtBr;
                 return true;
@@ -143,17 +160,14 @@ namespace seng::i18n {
     }
 
     void load() {
-        // Default ja' e' En; le do arquivo se existir.
         FILE *fp = std::fopen(kConfigPath, "r");
         if (!fp) return;
 
         char line[64];
         while (std::fgets(line, sizeof(line), fp)) {
-            // Strip newline.
             for (char *p = line; *p; ++p) {
                 if (*p == '\n' || *p == '\r') { *p = 0; break; }
             }
-            // Procura "lang=".
             if (std::strncmp(line, "lang=", 5) == 0) {
                 Lang parsed;
                 if (parseLangCode(line + 5, &parsed)) {
@@ -166,7 +180,6 @@ namespace seng::i18n {
     }
 
     void save() {
-        // Garante que o diretorio existe (idempotente).
         mkdir("sdmc:/switch", 0777);
         mkdir(kConfigDir,     0777);
 

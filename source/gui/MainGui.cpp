@@ -16,23 +16,15 @@
 
 namespace i18n = seng::i18n;
 
-namespace {
-    void rawDebugMark(const char *msg) {
-        FILE *fp = std::fopen("sdmc:/switch-engine_debug.log", "a");
-        if (!fp) return;
-        std::fputs(msg, fp);
-        std::fputc('\n', fp);
-        std::fflush(fp);
-        std::fclose(fp);
-    }
-} // namespace
-
 MainGui::MainGui() : m_scanner(std::make_unique<MemoryScanner>()) {
-    rawDebugMark("[debug] MainGui ctor");
-    seng::log::write("[maingui] ctor");
-    // Status default e' "(idle)". Inicializamos com a string traduzida
-    // do idioma atual -- assim o primeiro draw ja' aparece no idioma certo.
+    seng::log::write("INFO [maingui] ctor");
     m_status = i18n::tr(i18n::S::Idle);
+}
+
+MainGui::~MainGui() {
+    if (m_scanThread.joinable()) {
+        m_scanThread.join();
+    }
 }
 
 tsl::elm::Element *MainGui::createUI() {
@@ -66,6 +58,34 @@ tsl::elm::Element *MainGui::createUI() {
         return false;
     });
     list->addItem(pickItem);
+
+    // -------------------------------------------------------------------
+    // Value type & comparator
+    // -------------------------------------------------------------------
+    list->addItem(new tsl::elm::CategoryHeader(
+        i18n::tr(i18n::S::ValueTypeHeader)));
+
+    m_typeItem = new tsl::elm::ListItem(i18n::tr(i18n::S::ValueTypeHeader),
+                                         seng::valueTypeName(m_valueType));
+    m_typeItem->setClickListener([this](u64 keys) {
+        if (keys & HidNpadButton_A) {
+            onCycleValueType();
+            return true;
+        }
+        return false;
+    });
+    list->addItem(m_typeItem);
+
+    m_compareItem = new tsl::elm::ListItem(i18n::tr(i18n::S::CompareOpHeader),
+                                            seng::compareOpSymbol(m_compareOp));
+    m_compareItem->setClickListener([this](u64 keys) {
+        if (keys & HidNpadButton_A) {
+            onCycleCompareOp();
+            return true;
+        }
+        return false;
+    });
+    list->addItem(m_compareItem);
 
     // -------------------------------------------------------------------
     // Search value
@@ -151,7 +171,7 @@ tsl::elm::Element *MainGui::createUI() {
     list->addItem(m_statusItem);
 
     // -------------------------------------------------------------------
-    // Settings (idioma)
+    // Settings
     // -------------------------------------------------------------------
     list->addItem(new tsl::elm::CategoryHeader(
         i18n::tr(i18n::S::SettingsHeader)));
@@ -168,7 +188,7 @@ tsl::elm::Element *MainGui::createUI() {
     list->addItem(langItem);
 
     // -------------------------------------------------------------------
-    // Creditos (informativo; sem acao)
+    // Creditos
     // -------------------------------------------------------------------
     list->addItem(new tsl::elm::CategoryHeader(
         i18n::tr(i18n::S::CreditsHeader)));
@@ -184,10 +204,27 @@ tsl::elm::Element *MainGui::createUI() {
 }
 
 void MainGui::update() {
+    // Verifica se o scan assincrono terminou.
+    if (!m_scanning.load() && !m_pendingStatus.empty()) {
+        m_status = m_pendingStatus;
+        m_pendingStatus.clear();
+        if (m_scanThread.joinable()) {
+            m_scanThread.join();
+        }
+    }
+
     if (m_valueItem) {
         char buf[24];
-        std::snprintf(buf, sizeof(buf), "%" PRIu32, m_searchValue);
+        std::snprintf(buf, sizeof(buf), "%" PRIu64, m_searchValue);
         m_valueItem->setValue(buf);
+    }
+
+    if (m_typeItem) {
+        m_typeItem->setValue(seng::valueTypeName(m_valueType));
+    }
+
+    if (m_compareItem) {
+        m_compareItem->setValue(seng::compareOpSymbol(m_compareOp));
     }
 
     if (m_resultsItem) {
@@ -230,9 +267,6 @@ void MainGui::onDetectTarget() {
 }
 
 void MainGui::onPickProcess() {
-    // O ProcessListGui chama goBack() apos invocar o callback, entao quando
-    // voltarmos para o MainGui o m_scanner ja' tera a pid setada e o
-    // targetItem atualizado.
     tsl::changeTo<ProcessListGui>(
         [this](uint64_t pid, uint64_t tid) {
             this->onProcessPicked(pid, tid);
@@ -262,13 +296,34 @@ void MainGui::onProcessPicked(uint64_t pid, uint64_t tid) {
 }
 
 void MainGui::onPickSearchValue() {
+    uint64_t maxVal = UINT64_MAX;
+    switch (m_valueType) {
+        case seng::ValueType::U8:  maxVal = UINT8_MAX;  break;
+        case seng::ValueType::U16: maxVal = UINT16_MAX; break;
+        case seng::ValueType::U32: maxVal = UINT32_MAX; break;
+        case seng::ValueType::U64: maxVal = UINT64_MAX; break;
+        case seng::ValueType::F32: maxVal = UINT32_MAX; break;
+        case seng::ValueType::F64: maxVal = UINT64_MAX; break;
+    }
     tsl::changeTo<NumericInputGui>(
         std::string(i18n::tr(i18n::S::SearchValueTitle)),
-        static_cast<uint64_t>(m_searchValue),
-        static_cast<uint64_t>(UINT32_MAX),
+        m_searchValue,
+        maxVal,
         [this](uint64_t v) {
-            m_searchValue = static_cast<uint32_t>(v);
+            m_searchValue = v;
         });
+}
+
+void MainGui::onCycleValueType() {
+    auto t = static_cast<uint8_t>(m_valueType);
+    t = (t + 1) % 6;
+    m_valueType = static_cast<seng::ValueType>(t);
+}
+
+void MainGui::onCycleCompareOp() {
+    auto o = static_cast<uint8_t>(m_compareOp);
+    o = (o + 1) % 10;
+    m_compareOp = static_cast<seng::CompareOp>(o);
 }
 
 void MainGui::onFirstScan() {
@@ -276,21 +331,32 @@ void MainGui::onFirstScan() {
         m_status = i18n::tr(i18n::S::StatusNoTargetRunDetect);
         return;
     }
+    if (m_scanning.load()) return;
 
     m_status = i18n::tr(i18n::S::StatusScanning);
-    if (m_statusItem) m_statusItem->setValue(m_status);
+    m_scanning.store(true);
 
-    Result rc = m_scanner->firstScanU32(m_searchValue);
-    char buf[80];
-    if (R_FAILED(rc)) {
-        std::snprintf(buf, sizeof(buf),
-                      i18n::tr(i18n::S::StatusFirstScanFailedFmt), rc);
-    } else {
-        std::snprintf(buf, sizeof(buf),
-                      i18n::tr(i18n::S::StatusFirstScanResultFmt),
-                      ResultsStore::count());
-    }
-    m_status = buf;
+    auto type  = m_valueType;
+    auto op    = m_compareOp;
+    auto val   = m_searchValue;
+    auto val2  = m_searchValue2;
+
+    if (m_scanThread.joinable()) m_scanThread.join();
+    m_scanThread = std::thread([this, type, op, val, val2]() {
+        Result rc = m_scanner->firstScan(type, op, val, val2);
+        char buf[80];
+        if (R_FAILED(rc)) {
+            std::snprintf(buf, sizeof(buf),
+                          i18n::tr(i18n::S::StatusFirstScanFailedFmt), rc);
+        } else {
+            ResultsStore::invalidateCache();
+            std::snprintf(buf, sizeof(buf),
+                          i18n::tr(i18n::S::StatusFirstScanResultFmt),
+                          ResultsStore::count());
+        }
+        m_pendingStatus = buf;
+        m_scanning.store(false);
+    });
 }
 
 void MainGui::onNextScan() {
@@ -302,21 +368,31 @@ void MainGui::onNextScan() {
         m_status = i18n::tr(i18n::S::StatusNoPreviousResults);
         return;
     }
+    if (m_scanning.load()) return;
 
     m_status = i18n::tr(i18n::S::StatusFiltering);
-    if (m_statusItem) m_statusItem->setValue(m_status);
+    m_scanning.store(true);
 
-    Result rc = m_scanner->nextScanU32(m_searchValue);
-    char buf[80];
-    if (R_FAILED(rc)) {
-        std::snprintf(buf, sizeof(buf),
-                      i18n::tr(i18n::S::StatusNextScanFailedFmt), rc);
-    } else {
-        std::snprintf(buf, sizeof(buf),
-                      i18n::tr(i18n::S::StatusNextScanResultFmt),
-                      ResultsStore::count());
-    }
-    m_status = buf;
+    auto type = m_valueType;
+    auto op   = m_compareOp;
+    auto val  = m_searchValue;
+    auto val2 = m_searchValue2;
+
+    if (m_scanThread.joinable()) m_scanThread.join();
+    m_scanThread = std::thread([this, type, op, val, val2]() {
+        Result rc = m_scanner->nextScan(type, op, val, val2);
+        char buf[80];
+        if (R_FAILED(rc)) {
+            std::snprintf(buf, sizeof(buf),
+                          i18n::tr(i18n::S::StatusNextScanFailedFmt), rc);
+        } else {
+            std::snprintf(buf, sizeof(buf),
+                          i18n::tr(i18n::S::StatusNextScanResultFmt),
+                          ResultsStore::count());
+        }
+        m_pendingStatus = buf;
+        m_scanning.store(false);
+    });
 }
 
 void MainGui::onResetScan() {
@@ -330,5 +406,6 @@ void MainGui::onShowResults() {
         return;
     }
     tsl::changeTo<ResultsListGui>(m_scanner->getTargetPid(),
+                                  m_titleId,
                                   static_cast<size_t>(0));
 }

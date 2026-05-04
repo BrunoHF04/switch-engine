@@ -5,27 +5,23 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "../scanner/MemoryScanner.hpp"
+#include "seng_ipc.hpp"
 
 /**
  * MainGui
  *
- * Tela inicial do overlay. Compoe a UI com:
- *   - "Target Process": detecta o jogo em foreground (PID + TitleID).
- *   - "Search value": abre o NumericInputGui para digitar o valor procurado.
- *   - "First Scan", "Next Scan", "Reset": acoes do scanner via SengClient.
- *   - "Show Results": abre o ResultsListGui (com poke ao clicar num hit).
- *   - "Status": ultima mensagem (resultado / erro).
- *
- * Os scans rodam SINCRONOS no thread do click handler. O Tesla mantem o
- * draw em outra thread, entao a UI continua animando, mas inputs ficam
- * presos durante o scan. (TODO: thread separada para nao travar inputs.)
+ * Tela inicial do overlay com suporte a:
+ *   - Selecao de tipo (u8..f64) e comparador (==, !=, >, <, etc.)
+ *   - Scan assincrono em thread separada (UI nao trava)
+ *   - Freeze, undo poke, export cheats (delegados a ResultsListGui)
  */
 class MainGui : public tsl::Gui {
 public:
     MainGui();
-    ~MainGui() override = default;
+    ~MainGui() override;
 
     tsl::elm::Element *createUI() override;
     void               update() override;
@@ -33,19 +29,31 @@ public:
 private:
     std::unique_ptr<MemoryScanner> m_scanner;
 
-    tsl::elm::ListItem *m_targetItem  = nullptr;
-    tsl::elm::ListItem *m_valueItem   = nullptr;
-    tsl::elm::ListItem *m_resultsItem = nullptr;
-    tsl::elm::ListItem *m_statusItem  = nullptr;
+    tsl::elm::ListItem *m_targetItem   = nullptr;
+    tsl::elm::ListItem *m_valueItem    = nullptr;
+    tsl::elm::ListItem *m_typeItem     = nullptr;
+    tsl::elm::ListItem *m_compareItem  = nullptr;
+    tsl::elm::ListItem *m_resultsItem  = nullptr;
+    tsl::elm::ListItem *m_statusItem   = nullptr;
 
-    uint64_t    m_titleId      = 0;
-    uint32_t    m_searchValue  = 0;
-    std::string m_status       = "(idle)";
+    uint64_t         m_titleId      = 0;
+    uint64_t         m_searchValue  = 0;
+    uint64_t         m_searchValue2 = 0;
+    seng::ValueType  m_valueType    = seng::ValueType::U32;
+    seng::CompareOp  m_compareOp    = seng::CompareOp::Equal;
+    std::string      m_status;
+
+    // Scan assincrono
+    std::atomic<bool> m_scanning{false};
+    std::string       m_pendingStatus;
+    std::thread       m_scanThread;
 
     void onDetectTarget();
     void onPickProcess();
     void onProcessPicked(uint64_t pid, uint64_t tid);
     void onPickSearchValue();
+    void onCycleValueType();
+    void onCycleCompareOp();
     void onFirstScan();
     void onNextScan();
     void onResetScan();
