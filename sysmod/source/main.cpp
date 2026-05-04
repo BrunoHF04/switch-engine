@@ -29,6 +29,7 @@
 
 #include <switch.h>
 #include <switch/runtime/hosversion.h>
+#include <switch/services/ns.h>
 #include <switch/services/set.h>
 
 #include <cstring>
@@ -97,8 +98,14 @@ void __appInit(void) {
     // funciona (so' nao loga em arquivo).
     fsdevMountSdmc();
 
+    // ns:am2 para ler NACP (nomes reais dos jogos). Nao e critico.
+    rc = nsInitialize();
+    if (R_FAILED(rc)) {
+        // Se falhar, continuamos sem nomes reais (fallback para TID).
+    }
+
     seng::mod::log::init();
-    seng::mod::log::writeRaw("[init] sm/setsys+hos/pm/fs/sdmc OK");
+    seng::mod::log::write("INFO [init] sm/setsys+hos/pm/fs/sdmc/ns OK (ns rc=0x%08X)", rc);
 }
 
 void __appExit(void) {
@@ -106,6 +113,7 @@ void __appExit(void) {
     seng::mod::log::close();
     fsdevUnmountAll();
     fsExit();
+    nsExit();
     Debugger::releaseAuxServicesForExit();
     pminfoExit();
     pmdmntExit();

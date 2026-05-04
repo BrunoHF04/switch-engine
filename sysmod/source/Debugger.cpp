@@ -2,6 +2,7 @@
 #include "SysmodLog.hpp"
 
 #include <switch/runtime/hosversion.h>
+#include <switch/services/ns.h>
 #include <switch/services/pgl.h>
 
 #include <algorithm>
@@ -18,6 +19,51 @@ namespace Debugger {
         bool g_pmshell_ready = false;
         bool g_pgl_ready = false;
 
+        // Buffer estatico para leitura de NACP (~148 KB em BSS, fora do heap).
+        // Usado apenas dentro de resolveProcessName (single-threaded via IPC).
+        static NsApplicationControlData s_nacpBuf;
+
+        bool isAppTid(uint64_t tid) {
+            return tid >= 0x0100000000000000ULL && tid < 0x0200000000000000ULL;
+        }
+
+        // Tenta ler o nome real do app via ns:am2 (NACP). Retorna true se
+        // conseguiu preencher out com um nome legivel.
+        bool resolveNacpName(uint64_t tid, char *out, size_t outLen) {
+            if (!isAppTid(tid)) return false;
+
+            u64 actualSize = 0;
+            std::memset(&s_nacpBuf, 0, sizeof(s_nacpBuf));
+            Result rc = nsGetApplicationControlData(
+                NsApplicationControlSource_Storage,
+                tid, &s_nacpBuf, sizeof(s_nacpBuf), &actualSize);
+
+            if (R_FAILED(rc) || actualSize < sizeof(NacpStruct)) {
+                return false;
+            }
+
+            // Tenta American English (idx 0) primeiro, depois qualquer idioma.
+            const NacpStruct &nacp = s_nacpBuf.nacp;
+            for (int pass = 0; pass < 2; ++pass) {
+                int start = (pass == 0) ? 0 : 1;
+                int end   = (pass == 0) ? 1 : 16;
+                for (int i = start; i < end; ++i) {
+                    if (nacp.lang[i].name[0] != '\0') {
+                        std::strncpy(out, nacp.lang[i].name, outLen - 1);
+                        out[outLen - 1] = '\0';
+                        // Trunca em 30 chars para caber no ProcessEntry.name[32].
+                        if (std::strlen(out) > 30) {
+                            out[29] = '.';
+                            out[30] = '.';
+                            out[31] = '\0';
+                        }
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         void resolveProcessName(uint64_t pid, uint64_t tid, char *out, size_t outLen) {
             out[0] = '\0';
             if (tid == 0) {
@@ -25,10 +71,14 @@ namespace Debugger {
                               static_cast<unsigned long long>(pid));
                 return;
             }
-            // Tentar attach rapido para ler NACP nao e viavel em massa (lento e
-            // arriscado). Usamos o TID para gerar um label legivel.
-            if ((tid >> 56) == 0x01 ||
-                (tid >= 0x0100000000000000ULL && tid < 0x0200000000000000ULL)) {
+
+            // Tenta NACP real (nome do jogo legivel).
+            if (resolveNacpName(tid, out, outLen)) {
+                return;
+            }
+
+            // Fallback: label baseado no TID.
+            if (isAppTid(tid)) {
                 std::snprintf(out, outLen, "App_%08X",
                               static_cast<uint32_t>(tid & 0xFFFFFFFFu));
             } else if (tid >= 0x0500000000000000ULL && tid < 0x0600000000000000ULL) {

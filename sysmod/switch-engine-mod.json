@@ -19,6 +19,7 @@
 
     "service_access": [
         "fsp-srv",
+        "ns:am2",
         "pgl",
         "pm:dmnt",
         "pm:info",

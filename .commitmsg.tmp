@@ -1,0 +1,4 @@
+fix: resolver nomes reais dos apps via NACP (ns:am2)
+
+Adiciona ns:am2 ao NPDM e usa nsGetApplicationControlData para
+ler o nome real dos jogos em vez de gerar labels como App_XXXXXXXX.
